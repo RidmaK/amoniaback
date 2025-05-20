@@ -8,6 +8,7 @@ import base64
 from datetime import datetime
 import pandas as pd
 from color_chart_utils import ColorChart
+import colorsys
 
 # Configure logging
 logging.basicConfig(level=logging.DEBUG)
@@ -260,6 +261,153 @@ def train_data():
         logger.exception("Error in training data upload")
         return jsonify({
             "error": "Training data upload failed",
+            "details": str(e)
+        }), 500
+
+def is_color_near_black(r, g, b, threshold=50):
+    """Check if color is close to black"""
+    return r < threshold and g < threshold and b < threshold
+
+def is_color_near_white(r, g, b, threshold=200):
+    """Check if color is close to white"""
+    return r > threshold and g > threshold and b > threshold
+
+def get_color_distance(color1, color2):
+    """Calculate Euclidean distance between two RGB colors"""
+    return np.sqrt(sum((a - b) ** 2 for a, b in zip(color1, color2)))
+
+@app.route('/validate-color', methods=['POST'])
+def validate_color():
+    try:
+        # Handle file upload similar to predict endpoint
+        file_bytes = None
+        
+        if 'file' in request.form or 'file' in request.files:
+            if 'file' in request.files:
+                file = request.files['file']
+                file_bytes = file.read()
+            else:
+                form_data = request.form['file']
+                try:
+                    import json
+                    image_data = json.loads(form_data)
+                    if 'uri' in image_data:
+                        image_uri = image_data['uri']
+                        if image_uri.startswith('file://'):
+                            with open(image_uri[7:], 'rb') as f:
+                                file_bytes = f.read()
+                        else:
+                            with open(image_uri, 'rb') as f:
+                                file_bytes = f.read()
+                except:
+                    try:
+                        if form_data.startswith('data:image'):
+                            file_bytes = base64.b64decode(form_data.split(',')[1])
+                        else:
+                            file_bytes = base64.b64decode(form_data)
+                    except:
+                        pass
+
+        if file_bytes is None:
+            return jsonify({
+                "error": "No file uploaded",
+                "details": "No valid file data found in the request"
+            }), 400
+
+        # Process the image
+        nparr = np.frombuffer(file_bytes, np.uint8)
+        image = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+        
+        if image is None:
+            return jsonify({
+                "error": "Invalid image format",
+                "details": "Could not decode the image data"
+            }), 400
+
+        # Extract middle area color
+        height, width = image.shape[:2]
+        middle_h = int(height * 0.25)
+        middle_w = int(width * 0.25)
+        start_h = (height - middle_h) // 2
+        end_h = start_h + middle_h
+        start_w = (width - middle_w) // 2
+        end_w = start_w + middle_w
+        
+        middle_area = image[start_h:end_h, start_w:end_w]
+        avg_color = middle_area.mean(axis=(0, 1))
+        r, g, b = int(avg_color[2]), int(avg_color[1]), int(avg_color[0])
+        color_hex = '#{:02x}{:02x}{:02x}'.format(r, g, b)
+
+        # Check if color is near black or white
+        if is_color_near_black(r, g, b):
+            return jsonify({
+                "status": "error",
+                "message": "Sample is too concentrated",
+                "action": "Please dilute the sample and try again",
+                "color": {
+                    "hex": color_hex,
+                    "rgb": {"r": r, "g": g, "b": b}
+                }
+            }), 200
+
+        if is_color_near_white(r, g, b):
+            return jsonify({
+                "status": "error",
+                "message": "Sample is too diluted",
+                "action": "Please increase the concentration and try again",
+                "color": {
+                    "hex": color_hex,
+                    "rgb": {"r": r, "g": g, "b": b}
+                }
+            }), 200
+
+        # Check if color matches any color in the chart
+        min_distance = float('inf')
+        closest_match = None
+        
+        for _, row in color_chart.df.iterrows():
+            chart_color = (int(row['Red']), int(row['Green']), int(row['Blue']))
+            distance = get_color_distance((r, g, b), chart_color)
+            if distance < min_distance:
+                min_distance = distance
+                closest_match = {
+                    'concentration': float(row['Concentration_mg_L']),
+                    'hex': str(row['Hex']),
+                    'rgb': {
+                        'r': int(row['Red']),
+                        'g': int(row['Green']),
+                        'b': int(row['Blue'])
+                    }
+                }
+
+        # If the closest match is too far from any known color
+        if min_distance > 100:  # Threshold for color matching
+            return jsonify({
+                "status": "error",
+                "message": "Color not in expected range",
+                "action": "Please ensure the sample is properly prepared and try again",
+                "color": {
+                    "hex": color_hex,
+                    "rgb": {"r": r, "g": g, "b": b}
+                },
+                "closest_match": closest_match
+            }), 200
+
+        # If we get here, the color is valid
+        return jsonify({
+            "status": "success",
+            "message": "Color is within acceptable range",
+            "color": {
+                "hex": color_hex,
+                "rgb": {"r": r, "g": g, "b": b}
+            },
+            "closest_match": closest_match
+        }), 200
+
+    except Exception as e:
+        logger.exception("Error in color validation")
+        return jsonify({
+            "error": "Color validation failed",
             "details": str(e)
         }), 500
 
