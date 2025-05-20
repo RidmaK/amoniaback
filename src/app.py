@@ -146,11 +146,23 @@ def predict():
                 
             logger.debug(f"Successfully decoded image with shape: {image.shape}")
             
-            # Extract dominant color (OpenCV loads as BGR)
-            avg_color = image.mean(axis=(0, 1))
+            # Extract middle area color (OpenCV loads as BGR)
+            height, width = image.shape[:2]
+            # Calculate middle area (25% of the image size)
+            middle_h = int(height * 0.25)
+            middle_w = int(width * 0.25)
+            # Calculate start and end coordinates for middle area
+            start_h = (height - middle_h) // 2
+            end_h = start_h + middle_h
+            start_w = (width - middle_w) // 2
+            end_w = start_w + middle_w
+            
+            # Extract middle area
+            middle_area = image[start_h:end_h, start_w:end_w]
+            avg_color = middle_area.mean(axis=(0, 1))
             r, g, b = int(avg_color[2]), int(avg_color[1]), int(avg_color[0])
             color_hex = '#{:02x}{:02x}{:02x}'.format(r, g, b)
-            logger.debug(f"Detected color: {color_hex} RGB: ({r},{g},{b})")
+            logger.debug(f"Detected middle area color: {color_hex} RGB: ({r},{g},{b})")
 
             # Find closest color in chart
             match = color_chart.find_closest((r, g, b))
@@ -168,9 +180,9 @@ def predict():
                 'image_path': img_path,
                 'concentration': match['concentration'],
                 'color_hex': match['hex'],
-                'color_r': match['rgb'][0],
-                'color_g': match['rgb'][1],
-                'color_b': match['rgb'][2]
+                'color_r': r,
+                'color_g': g,
+                'color_b': b
             }])
             new_data.to_csv(DATASET_PATH, mode='a', header=False, index=False)
             
@@ -180,6 +192,14 @@ def predict():
                 "ammonia_concentration": float(match['concentration']),
                 "success": True,
                 "saved_image": img_filename,
+                "original_color":  {
+                    "hex": color_hex,
+                    "rgb": {
+                        "r": int(match['rgb'][0]),
+                        "g": int(match['rgb'][1]),
+                        "b": int(match['rgb'][2])
+                    }
+                },
                 "color": {
                     "hex": str(match['hex']),
                     "rgb": {
