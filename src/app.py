@@ -9,6 +9,7 @@ from datetime import datetime
 import pandas as pd
 from color_chart_utils import ColorChart
 import colorsys
+from sklearn.cluster import KMeans
 
 # Configure logging
 logging.basicConfig(level=logging.DEBUG)
@@ -57,6 +58,82 @@ def get_history():
         "history": history,
         "chart": chart
     })
+
+def get_center_circle_color(image, circle_radius_percent=0.1):
+    """Get the dominant color from the center circle of the image"""
+    height, width = image.shape[:2]
+    center_x, center_y = width // 2, height // 2
+    radius = int(min(width, height) * circle_radius_percent)
+    
+    # Create a mask for the circle
+    y, x = np.ogrid[:height, :width]
+    dist_from_center = np.sqrt((x - center_x)**2 + (y - center_y)**2)
+    mask = dist_from_center <= radius
+    
+    # Extract pixels within the circle
+    circle_pixels = image[mask]
+    
+    if len(circle_pixels) == 0:
+        return None
+    
+    # Get color distribution
+    pixels = circle_pixels.reshape(-1, 3)
+    
+    # Remove any pure black or white pixels (likely noise)
+    mask = ~((pixels[:, 0] < 10) & (pixels[:, 1] < 10) & (pixels[:, 2] < 10) |
+             (pixels[:, 0] > 245) & (pixels[:, 1] > 245) & (pixels[:, 2] > 245))
+    pixels = pixels[mask]
+    
+    if len(pixels) == 0:
+        return None
+    
+    # Perform K-means clustering
+    kmeans = KMeans(n_clusters=3, random_state=42)
+    kmeans.fit(pixels)
+    
+    # Get the dominant color (cluster with most points)
+    colors = kmeans.cluster_centers_
+    labels = kmeans.labels_
+    counts = np.bincount(labels)
+    dominant_color = colors[counts.argmax()]
+    
+    # Convert to Python native int type
+    return [int(x) for x in dominant_color]
+
+def find_concentration_by_primary_color(rgb, color_chart):
+    """Find concentration based on the highest RGB value"""
+    r, g, b = rgb
+    
+    # Find the primary color (highest value)
+    max_val = max(r, g, b)
+    primary_color = 'r' if r == max_val else 'g' if g == max_val else 'b'
+    
+    # Get all concentrations where the primary color matches
+    chart_df = color_chart.df
+    if primary_color == 'r':
+        matches = chart_df[chart_df['Red'] == max_val]
+    elif primary_color == 'g':
+        matches = chart_df[chart_df['Green'] == max_val]
+    else:
+        matches = chart_df[chart_df['Blue'] == max_val]
+    
+    if len(matches) == 0:
+        # If no exact match, find closest
+        return color_chart.find_closest(rgb)
+    
+    # Get the closest match from the filtered results
+    matches_colors = matches[['Red', 'Green', 'Blue']].values
+    dists = np.linalg.norm(matches_colors - np.array(rgb), axis=1)
+    idx = np.argmin(dists)
+    
+    return {
+        'concentration': float(matches.iloc[idx]['Concentration_mg_L']),
+        'hex': str(matches.iloc[idx]['Hex']),
+        'rgb': (int(matches.iloc[idx]['Red']), 
+                int(matches.iloc[idx]['Green']), 
+                int(matches.iloc[idx]['Blue'])),
+        'distance': float(dists[idx])
+    }
 
 @app.route('/predict', methods=['POST'])
 def predict():
@@ -147,27 +224,27 @@ def predict():
                 
             logger.debug(f"Successfully decoded image with shape: {image.shape}")
             
-            # Extract middle area color (OpenCV loads as BGR)
-            height, width = image.shape[:2]
-            # Calculate middle area (25% of the image size)
-            middle_h = int(height * 0.25)
-            middle_w = int(width * 0.25)
-            # Calculate start and end coordinates for middle area
-            start_h = (height - middle_h) // 2
-            end_h = start_h + middle_h
-            start_w = (width - middle_w) // 2
-            end_w = start_w + middle_w
+            # Get color from center circle
+            dominant_color = get_center_circle_color(image)
+            if dominant_color is None:
+                return jsonify({
+                    "error": "Invalid sample",
+                    "details": "Could not detect valid color in the center circle. Please ensure the sample is properly prepared."
+                }), 400
             
-            # Extract middle area
-            middle_area = image[start_h:end_h, start_w:end_w]
-            avg_color = middle_area.mean(axis=(0, 1))
-            r, g, b = int(avg_color[2]), int(avg_color[1]), int(avg_color[0])
+            # OpenCV loads as BGR, convert to RGB
+            b, g, r = dominant_color
             color_hex = '#{:02x}{:02x}{:02x}'.format(r, g, b)
-            logger.debug(f"Detected middle area color: {color_hex} RGB: ({r},{g},{b})")
+            logger.debug(f"Detected color: {color_hex} RGB: ({r},{g},{b})")
 
-            # Find closest color in chart
-            match = color_chart.find_closest((r, g, b))
+            # Find concentration based on primary color
+            match = find_concentration_by_primary_color((r, g, b), color_chart)
             logger.debug(f"Matched chart color: {match['hex']} RGB: {match['rgb']} -> {match['concentration']} mg/L (distance: {match['distance']:.2f})")
+
+            # Convert match values to Python native types
+            match_rgb = [int(x) for x in match['rgb']]
+            match_distance = float(match['distance'])
+            match_concentration = float(match['concentration'])
 
             # Save to dataset
             if not os.path.exists(DATASET_PATH):
@@ -179,7 +256,7 @@ def predict():
             new_data = pd.DataFrame([{
                 'timestamp': datetime.now().isoformat(),
                 'image_path': img_path,
-                'concentration': match['concentration'],
+                'concentration': match_concentration,
                 'color_hex': match['hex'],
                 'color_r': r,
                 'color_g': g,
@@ -190,26 +267,26 @@ def predict():
             history = get_concentration_history()
             
             return jsonify({
-                "ammonia_concentration": float(match['concentration']),
+                "ammonia_concentration": match_concentration,
                 "success": True,
                 "saved_image": img_filename,
                 "original_color":  {
                     "hex": color_hex,
                     "rgb": {
-                        "r": int(match['rgb'][0]),
-                        "g": int(match['rgb'][1]),
-                        "b": int(match['rgb'][2])
+                        "r": r,
+                        "g": g,
+                        "b": b
                     }
                 },
                 "color": {
                     "hex": str(match['hex']),
                     "rgb": {
-                        "r": int(match['rgb'][0]),
-                        "g": int(match['rgb'][1]),
-                        "b": int(match['rgb'][2])
+                        "r": match_rgb[0],
+                        "g": match_rgb[1],
+                        "b": match_rgb[2]
                     }
                 },
-                "distance": float(match['distance']),
+                "distance": match_distance,
                 "history": history,
                 "chart": [
                     {
