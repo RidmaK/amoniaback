@@ -514,13 +514,16 @@ def enhance_scanned_document(image, brightness=1.2, contrast=1.5):
         l, a, b = cv2.split(lab)
         
         # Step 5: Enhance contrast in text regions
-        # Apply CLAHE with different parameters for text and non-text regions
+        # Apply CLAHE to the entire L channel
         clahe_strong = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8, 8))
         clahe_gentle = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(16, 16))
         
-        l_enhanced = l.copy()
-        l_enhanced[text_mask] = clahe_strong.apply(l[text_mask])
-        l_enhanced[~text_mask] = clahe_gentle.apply(l[~text_mask])
+        # Create enhanced L channel
+        l_text = clahe_strong.apply(l)
+        l_bg = clahe_gentle.apply(l)
+        
+        # Combine text and background regions
+        l_enhanced = np.where(text_mask, l_text, l_bg)
         
         # Step 6: Merge channels back
         lab_enhanced = cv2.merge([l_enhanced, a, b])
@@ -532,11 +535,17 @@ def enhance_scanned_document(image, brightness=1.2, contrast=1.5):
         img = img * brightness_factor
         
         # Step 8: Apply contrast enhancement
-        # Use stronger contrast for text regions
+        # Normalize to 0-1 range
         img = img / 255.0
-        img[text_mask] = np.power(img[text_mask], 0.85)  # Enhance text
-        img[~text_mask] = 1.0 / (1.0 + np.exp(-contrast * (img[~text_mask] - 0.5)))  # Smooth non-text
-        img = img * 255.0
+        
+        # Apply different contrast enhancements for text and non-text regions
+        img_enhanced = np.zeros_like(img)
+        for i in range(3):  # Process each channel
+            img_enhanced[:,:,i] = np.where(text_mask,
+                                         np.power(img[:,:,i], 0.85),  # Text regions
+                                         1.0 / (1.0 + np.exp(-contrast * (img[:,:,i] - 0.5))))  # Non-text regions
+        
+        img = img_enhanced * 255.0
         
         # Step 9: Sharpen text edges
         kernel = np.array([[-1,-1,-1],
