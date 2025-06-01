@@ -491,53 +491,57 @@ def validate_color():
 
 def enhance_scanned_document(image, brightness=1.2, contrast=1.5):
     """
-    Advanced image enhancement specifically designed for scanned documents
+    Advanced image enhancement with reduced scanning effect
     """
     try:
         # Convert to float for better precision
         img = image.astype(np.float32)
         
-        # Step 1: Noise reduction while preserving edges
-        img = cv2.bilateralFilter(img.astype(np.uint8), 9, 75, 75).astype(np.float32)
+        # Step 1: Gentle noise reduction
+        # Reduced bilateral filter parameters for more natural look
+        img = cv2.bilateralFilter(img.astype(np.uint8), 5, 35, 35).astype(np.float32)
         
         # Step 2: Convert to LAB color space for better luminance processing
         lab = cv2.cvtColor(img.astype(np.uint8), cv2.COLOR_BGR2LAB)
         l_channel = lab[:, :, 0]
         
-        # Step 3: Apply CLAHE (Contrast Limited Adaptive Histogram Equalization)
-        clahe = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8, 8))
+        # Step 3: Apply gentler CLAHE
+        # Reduced clip limit and increased tile size for smoother effect
+        clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(16, 16))
         l_channel = clahe.apply(l_channel)
         
         # Merge back
         lab[:, :, 0] = l_channel
         img = cv2.cvtColor(lab, cv2.COLOR_LAB2BGR).astype(np.float32)
         
-        # Step 4: Gamma correction for better midtone contrast
-        gamma = 0.7  # Increased from 0.8 to brighten more
+        # Step 4: Subtle gamma correction
+        gamma = 0.85  # Closer to 1.0 for more subtle effect
         img = np.power(img / 255.0, gamma) * 255.0
         
-        # Step 5: Advanced brightness and contrast adjustment
+        # Step 5: Gentle brightness and contrast adjustment
         mean_val = np.mean(img)
         
-        # Adaptive brightness - stronger adjustment for darker images
-        adaptive_brightness = brightness * (2.0 - mean_val / 255.0)
+        # Reduced adaptive brightness adjustment
+        adaptive_brightness = brightness * (1.5 - mean_val / 255.0)  # Reduced from 2.0 to 1.5
         img = img * adaptive_brightness
         
-        # Adaptive contrast with sigmoid function
+        # Gentler contrast adjustment
         img = img / 255.0  # Normalize to 0-1
-        img = 1.0 / (1.0 + np.exp(-contrast * (img - 0.5)))
+        contrast_factor = contrast * 0.7  # Reduce contrast intensity
+        img = 1.0 / (1.0 + np.exp(-contrast_factor * (img - 0.5)))
         img = img * 255.0
         
-        # Step 6: Sharpening
-        gaussian = cv2.GaussianBlur(img.astype(np.uint8), (0, 0), 2.0)
+        # Step 6: Very subtle sharpening
+        gaussian = cv2.GaussianBlur(img.astype(np.uint8), (0, 0), 1.5)
         unsharp_mask = img - gaussian
-        img = img + unsharp_mask * 0.8
+        img = img + unsharp_mask * 0.3  # Reduced from 0.8 to 0.3
         
-        # Step 7: Final histogram stretching
-        p2, p98 = np.percentile(img, (2, 98))  # Changed from 1,99 to 2,98 for better balance
-        img = np.clip((img - p2) / (p98 - p2) * 255.0, 0, 255)
+        # Step 7: Gentle histogram stretching
+        # Using wider percentile range for smoother effect
+        p5, p95 = np.percentile(img, (5, 95))
+        img = np.clip((img - p5) / (p95 - p5) * 255.0, 0, 255)
         
-        # Final cleanup
+        # Final cleanup - smaller kernel for less aggressive smoothing
         img = cv2.medianBlur(img.astype(np.uint8), 3)
         
         return img.astype(np.uint8)
@@ -547,7 +551,7 @@ def enhance_scanned_document(image, brightness=1.2, contrast=1.5):
 
 def auto_enhance_document(image):
     """
-    Automatic document enhancement with optimal settings
+    Automatic document enhancement with gentler settings
     """
     try:
         # Convert to grayscale for analysis
@@ -557,24 +561,24 @@ def auto_enhance_document(image):
         mean_brightness = np.mean(gray)
         contrast_measure = np.std(gray)
         
-        # Optimized enhancement parameters
+        # Gentler enhancement parameters
         if mean_brightness < 85:  # Very dark image
-            brightness = 2.2
-            contrast = 2.5
+            brightness = 1.6  # Reduced from 2.2
+            contrast = 1.8   # Reduced from 2.5
         elif mean_brightness < 120:  # Dark image
-            brightness = 1.8
-            contrast = 2.2
+            brightness = 1.4  # Reduced from 1.8
+            contrast = 1.6   # Reduced from 2.2
         elif mean_brightness > 180:  # Bright image
-            brightness = 0.9
-            contrast = 1.8
+            brightness = 0.95  # Closer to 1.0
+            contrast = 1.4    # Reduced from 1.8
         else:  # Normal brightness
-            brightness = 1.3
-            contrast = 2.0
+            brightness = 1.2  # Reduced from 1.3
+            contrast = 1.5   # Reduced from 2.0
         
-        # Adjust for low contrast images
+        # Gentler adjustment for low contrast
         if contrast_measure < 30:
-            contrast *= 1.5
-            brightness *= 1.2
+            contrast *= 1.3  # Reduced from 1.5
+            brightness *= 1.1  # Reduced from 1.2
         
         return enhance_scanned_document(image, brightness, contrast)
     except Exception as e:
