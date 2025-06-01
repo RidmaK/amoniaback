@@ -489,119 +489,87 @@ def validate_color():
             "details": str(e)
         }), 500
 
-def enhance_scanned_document(image, brightness=1.2, contrast=1.5):
+def enhance_scanned_document(image, brightness=1.4, contrast=1.5):
     """
-    Document enhancement similar to CamScanner app
+    Basic but effective image enhancement
     """
     try:
         # Convert to float for better precision
         img = image.astype(np.float32)
         
-        # Step 1: Convert to grayscale for analysis
-        gray = cv2.cvtColor(img.astype(np.uint8), cv2.COLOR_BGR2GRAY)
-        
-        # Step 2: Apply adaptive thresholding to detect text regions
-        block_size = 15
-        C = 2
-        binary = cv2.adaptiveThreshold(gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, 
-                                     cv2.THRESH_BINARY, block_size, C)
-        
-        # Step 3: Create a mask for text regions
-        text_mask = binary < 128
-        
-        # Step 4: Convert to LAB color space
+        # Step 1: Convert to LAB color space for better brightness adjustment
         lab = cv2.cvtColor(img.astype(np.uint8), cv2.COLOR_BGR2LAB)
         l, a, b = cv2.split(lab)
         
-        # Step 5: Enhance contrast in text regions
-        # Apply CLAHE to the entire L channel
-        clahe_strong = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8, 8))
-        clahe_gentle = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(16, 16))
+        # Step 2: Apply CLAHE to enhance local contrast
+        clahe = cv2.createCLAHE(clipLimit=2.5, tileGridSize=(8, 8))
+        l = clahe.apply(l)
         
-        # Create enhanced L channel
-        l_text = clahe_strong.apply(l)
-        l_bg = clahe_gentle.apply(l)
+        # Step 3: Merge back and convert to BGR
+        enhanced = cv2.merge([l, a, b])
+        img = cv2.cvtColor(enhanced, cv2.COLOR_LAB2BGR).astype(np.float32)
         
-        # Combine text and background regions
-        l_enhanced = np.where(text_mask, l_text, l_bg)
+        # Step 4: Adjust brightness
+        img = cv2.multiply(img, brightness)
         
-        # Step 6: Merge channels back
-        lab_enhanced = cv2.merge([l_enhanced, a, b])
-        img = cv2.cvtColor(lab_enhanced, cv2.COLOR_LAB2BGR).astype(np.float32)
+        # Step 5: Adjust contrast
+        # Formula: (x - mean) * contrast + mean
+        mean = np.mean(img)
+        img = (img - mean) * contrast + mean
         
-        # Step 7: Adaptive brightness based on text density
-        text_density = np.mean(text_mask)
-        brightness_factor = brightness * (1.0 + text_density)
-        img = img * brightness_factor
+        # Ensure valid range
+        img = np.clip(img, 0, 255).astype(np.uint8)
         
-        # Step 8: Apply contrast enhancement
-        # Normalize to 0-1 range
-        img = img / 255.0
-        
-        # Apply different contrast enhancements for text and non-text regions
-        img_enhanced = np.zeros_like(img)
-        for i in range(3):  # Process each channel
-            img_enhanced[:,:,i] = np.where(text_mask,
-                                         np.power(img[:,:,i], 0.85),  # Text regions
-                                         1.0 / (1.0 + np.exp(-contrast * (img[:,:,i] - 0.5))))  # Non-text regions
-        
-        img = img_enhanced * 255.0
-        
-        # Step 9: Sharpen text edges
-        kernel = np.array([[-1,-1,-1],
-                         [-1, 9,-1],
-                         [-1,-1,-1]]) / 9.0
+        # Optional: Very light sharpening for clarity
+        kernel = np.array([[-0.5,-0.5,-0.5],
+                         [-0.5, 5,-0.5],
+                         [-0.5,-0.5,-0.5]]) / 1.0
         img = cv2.filter2D(img, -1, kernel)
         
-        # Step 10: Final cleanup and white balance
-        # Stretch histogram for better white/black points
-        for channel in range(3):
-            p_low, p_high = np.percentile(img[:,:,channel], (2, 98))
-            img[:,:,channel] = np.clip((img[:,:,channel] - p_low) * 255.0 / (p_high - p_low), 0, 255)
-        
-        return img.astype(np.uint8)
+        return img
+
     except Exception as e:
         logger.error(f"Error in enhance_scanned_document: {str(e)}")
         raise
 
 def auto_enhance_document(image):
     """
-    Automatic document enhancement with CamScanner-like settings
+    Automatic image enhancement with optimized parameters
     """
     try:
-        # Convert to grayscale for analysis
-        gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+        # Convert to LAB for better brightness analysis
+        lab = cv2.cvtColor(image, cv2.COLOR_BGR2LAB)
+        l, _, _ = cv2.split(lab)
         
-        # Analyze image characteristics
-        mean_brightness = np.mean(gray)
-        contrast_measure = np.std(gray)
+        # Calculate image statistics
+        mean_brightness = np.mean(l)
+        std_brightness = np.std(l)
         
-        # Calculate text density using adaptive threshold
-        binary = cv2.adaptiveThreshold(gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, 
-                                     cv2.THRESH_BINARY, 15, 2)
-        text_density = 1.0 - (np.sum(binary) / (binary.shape[0] * binary.shape[1] * 255))
-        
-        # Adjust parameters based on text density and brightness
-        if text_density > 0.3:  # High text content
-            if mean_brightness < 100:  # Dark image
-                brightness = 1.8
-                contrast = 2.2
-            else:
-                brightness = 1.4
+        # Determine enhancement parameters
+        if mean_brightness < 100:  # Dark image
+            if std_brightness < 30:  # Low contrast
+                brightness = 1.7
                 contrast = 1.8
-        else:  # Low text content
-            if mean_brightness < 100:
-                brightness = 1.6
-                contrast = 1.6
-            else:
-                brightness = 1.2
+            else:  # Good contrast
+                brightness = 1.5
                 contrast = 1.4
-        
-        # Boost contrast for low contrast images
-        if contrast_measure < 40:
-            contrast *= 1.4
+        elif mean_brightness < 150:  # Medium brightness
+            if std_brightness < 30:  # Low contrast
+                brightness = 1.3
+                contrast = 1.6
+            else:  # Good contrast
+                brightness = 1.2
+                contrast = 1.3
+        else:  # Bright image
+            if std_brightness < 30:  # Low contrast
+                brightness = 1.1
+                contrast = 1.4
+            else:  # Good contrast
+                brightness = 1.0
+                contrast = 1.2
         
         return enhance_scanned_document(image, brightness, contrast)
+        
     except Exception as e:
         logger.error(f"Error in auto_enhance_document: {str(e)}")
         raise
