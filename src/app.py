@@ -488,5 +488,89 @@ def validate_color():
             "details": str(e)
         }), 500
 
+@app.route('/process-image', methods=['POST'])
+def process_image():
+    try:
+        logger.debug(f"Process image request received - Content-Type: {request.content_type}")
+        logger.debug(f"Files in request: {request.files}")
+        logger.debug(f"Form data: {request.form}")
+        
+        # Get brightness and contrast parameters
+        brightness = float(request.form.get('brightness', 1.2))
+        contrast = float(request.form.get('contrast', 1.3))
+        
+        # Handle file upload
+        file_bytes = None
+        
+        if 'file' in request.form or 'file' in request.files:
+            if 'file' in request.files:
+                file = request.files['file']
+                file_bytes = file.read()
+            else:
+                form_data = request.form['file']
+                try:
+                    import json
+                    image_data = json.loads(form_data)
+                    if 'uri' in image_data:
+                        image_uri = image_data['uri']
+                        if image_uri.startswith('file://'):
+                            with open(image_uri[7:], 'rb') as f:
+                                file_bytes = f.read()
+                        else:
+                            with open(image_uri, 'rb') as f:
+                                file_bytes = f.read()
+                except:
+                    try:
+                        if form_data.startswith('data:image'):
+                            file_bytes = base64.b64decode(form_data.split(',')[1])
+                        else:
+                            file_bytes = base64.b64decode(form_data)
+                    except:
+                        pass
+
+        if file_bytes is None:
+            logger.error("No valid file data found in request")
+            return jsonify({
+                "error": "No file uploaded",
+                "details": "No valid file data found in the request"
+            }), 400
+
+        # Convert bytes to numpy array
+        nparr = np.frombuffer(file_bytes, np.uint8)
+        image = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+        
+        if image is None:
+            logger.error("Failed to decode image data")
+            return jsonify({
+                "error": "Invalid image format",
+                "details": "Could not decode the image data"
+            }), 400
+
+        # Apply brightness adjustment
+        image = image.astype(float)
+        image = image * brightness
+        
+        # Apply contrast adjustment
+        image = (image - 128) * contrast + 128
+        
+        # Clip values to valid range
+        image = np.clip(image, 0, 255).astype(np.uint8)
+        
+        # Encode processed image to base64
+        _, buffer = cv2.imencode('.jpg', image, [cv2.IMWRITE_JPEG_QUALITY, 90])
+        image_base64 = base64.b64encode(buffer).decode('utf-8')
+        
+        return jsonify({
+            "success": True,
+            "imageUri": f"data:image/jpeg;base64,{image_base64}"
+        })
+
+    except Exception as e:
+        logger.exception("Error processing image")
+        return jsonify({
+            "error": "Image processing error",
+            "details": str(e)
+        }), 500
+
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5000, debug=True)
