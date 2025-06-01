@@ -657,18 +657,16 @@ def process_image():
             enhanced_image = enhance_scanned_document(image, brightness, contrast)
             logger.debug(f"Applied manual enhancement - brightness: {brightness}, contrast: {contrast}")
 
-        # Encode to high-quality JPEG
+        # Ensure the enhanced image is in the correct format and range
+        enhanced_image = np.clip(enhanced_image, 0, 255).astype(np.uint8)
+
+        # Encode to JPEG
         try:
-            # Fix: Properly format encode parameters as list of pairs
-            encode_params = [(cv2.IMWRITE_JPEG_QUALITY, 95)]
-            success, buffer = cv2.imencode('.jpg', enhanced_image, encode_params)
+            # Simple encoding first
+            success, buffer = cv2.imencode('.jpg', enhanced_image)
             
             if not success:
-                logger.error("Failed to encode image with initial parameters, trying fallback")
-                # Fallback to basic encoding if the optimized version fails
-                success, buffer = cv2.imencode('.jpg', enhanced_image)
-                
-            if not success:
+                logger.error("Failed to encode image")
                 return jsonify({
                     "error": "Encoding error",
                     "details": "Failed to encode the processed image"
@@ -682,7 +680,14 @@ def process_image():
             }), 500
         
         # Convert to base64
-        image_base64 = base64.b64encode(buffer).decode('utf-8')
+        try:
+            image_base64 = base64.b64encode(buffer).decode('utf-8')
+        except Exception as e:
+            logger.error(f"Error during base64 encoding: {str(e)}")
+            return jsonify({
+                "error": "Encoding error",
+                "details": "Failed to convert image to base64"
+            }), 500
         
         logger.debug("Image processing completed successfully")
         
