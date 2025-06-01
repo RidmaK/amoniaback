@@ -492,89 +492,93 @@ def enhance_scanned_document(image, brightness=1.2, contrast=1.5):
     """
     Advanced image enhancement specifically designed for scanned documents
     """
-    # Convert to float for better precision
-    img = image.astype(np.float32)
-    
-    # Step 1: Noise reduction while preserving edges
-    # Use bilateral filter to reduce noise while keeping edges sharp
-    img = cv2.bilateralFilter(img.astype(np.uint8), 9, 75, 75).astype(np.float32)
-    
-    # Step 2: Correct perspective and skew (basic version)
-    # For production, you'd want to add automatic skew detection
-    
-    # Step 3: Advanced contrast enhancement using CLAHE
-    # Convert to LAB color space for better luminance processing
-    lab = cv2.cvtColor(img.astype(np.uint8), cv2.COLOR_BGR2LAB)
-    l_channel = lab[:, :, 0]
-    
-    # Apply CLAHE (Contrast Limited Adaptive Histogram Equalization)
-    clahe = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8, 8))
-    l_channel = clahe.apply(l_channel)
-    
-    # Merge back
-    lab[:, :, 0] = l_channel
-    img = cv2.cvtColor(lab, cv2.COLOR_LAB2BGR).astype(np.float32)
-    
-    # Step 4: Gamma correction for better midtone contrast
-    gamma = 0.8  # Brighten midtones
-    img = np.power(img / 255.0, gamma) * 255.0
-    
-    # Step 5: Advanced brightness and contrast adjustment
-    # Use adaptive adjustment based on local statistics
-    mean_val = np.mean(img)
-    std_val = np.std(img)
-    
-    # Adaptive brightness - adjust less for already bright images
-    adaptive_brightness = brightness * (1.0 - mean_val / 255.0 * 0.5)
-    img = img * adaptive_brightness
-    
-    # Adaptive contrast with sigmoid function for smooth transitions
-    img = img / 255.0  # Normalize to 0-1
-    img = 1.0 / (1.0 + np.exp(-contrast * (img - 0.5)))
-    img = img * 255.0  # Scale back
-    
-    # Step 6: Sharpening using unsharp masking
-    gaussian = cv2.GaussianBlur(img.astype(np.uint8), (0, 0), 2.0)
-    unsharp_mask = img - gaussian
-    img = img + unsharp_mask * 0.8  # Adjust sharpening strength
-    
-    # Step 7: Advanced histogram stretching
-    # Use percentile-based stretching to avoid outliers
-    p1, p99 = np.percentile(img, (1, 99))
-    img = np.clip((img - p1) / (p99 - p1) * 255.0, 0, 255)
-    
-    # Step 8: Final cleanup - remove extreme noise
-    img = cv2.medianBlur(img.astype(np.uint8), 3)
-    
-    return img.astype(np.uint8)
+    try:
+        # Convert to float for better precision
+        img = image.astype(np.float32)
+        
+        # Step 1: Noise reduction while preserving edges
+        img = cv2.bilateralFilter(img.astype(np.uint8), 9, 75, 75).astype(np.float32)
+        
+        # Step 2: Convert to LAB color space for better luminance processing
+        lab = cv2.cvtColor(img.astype(np.uint8), cv2.COLOR_BGR2LAB)
+        l_channel = lab[:, :, 0]
+        
+        # Step 3: Apply CLAHE (Contrast Limited Adaptive Histogram Equalization)
+        clahe = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8, 8))
+        l_channel = clahe.apply(l_channel)
+        
+        # Merge back
+        lab[:, :, 0] = l_channel
+        img = cv2.cvtColor(lab, cv2.COLOR_LAB2BGR).astype(np.float32)
+        
+        # Step 4: Gamma correction for better midtone contrast
+        gamma = 0.7  # Increased from 0.8 to brighten more
+        img = np.power(img / 255.0, gamma) * 255.0
+        
+        # Step 5: Advanced brightness and contrast adjustment
+        mean_val = np.mean(img)
+        
+        # Adaptive brightness - stronger adjustment for darker images
+        adaptive_brightness = brightness * (2.0 - mean_val / 255.0)
+        img = img * adaptive_brightness
+        
+        # Adaptive contrast with sigmoid function
+        img = img / 255.0  # Normalize to 0-1
+        img = 1.0 / (1.0 + np.exp(-contrast * (img - 0.5)))
+        img = img * 255.0
+        
+        # Step 6: Sharpening
+        gaussian = cv2.GaussianBlur(img.astype(np.uint8), (0, 0), 2.0)
+        unsharp_mask = img - gaussian
+        img = img + unsharp_mask * 0.8
+        
+        # Step 7: Final histogram stretching
+        p2, p98 = np.percentile(img, (2, 98))  # Changed from 1,99 to 2,98 for better balance
+        img = np.clip((img - p2) / (p98 - p2) * 255.0, 0, 255)
+        
+        # Final cleanup
+        img = cv2.medianBlur(img.astype(np.uint8), 3)
+        
+        return img.astype(np.uint8)
+    except Exception as e:
+        logger.error(f"Error in enhance_scanned_document: {str(e)}")
+        raise
 
 def auto_enhance_document(image):
     """
     Automatic document enhancement with optimal settings
     """
-    # Convert to grayscale for analysis
-    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-    
-    # Analyze image characteristics
-    mean_brightness = np.mean(gray)
-    contrast_measure = np.std(gray)
-    
-    # Determine optimal enhancement parameters based on image analysis
-    if mean_brightness < 100:  # Dark image
-        brightness = 1.8
-        contrast = 2.2
-    elif mean_brightness > 180:  # Bright image
-        brightness = 0.9
-        contrast = 1.8
-    else:  # Normal brightness
-        brightness = 1.3
-        contrast = 2.0
-    
-    # Adjust for low contrast images
-    if contrast_measure < 30:
-        contrast *= 1.5
-    
-    return enhance_scanned_document(image, brightness, contrast)
+    try:
+        # Convert to grayscale for analysis
+        gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+        
+        # Analyze image characteristics
+        mean_brightness = np.mean(gray)
+        contrast_measure = np.std(gray)
+        
+        # Optimized enhancement parameters
+        if mean_brightness < 85:  # Very dark image
+            brightness = 2.2
+            contrast = 2.5
+        elif mean_brightness < 120:  # Dark image
+            brightness = 1.8
+            contrast = 2.2
+        elif mean_brightness > 180:  # Bright image
+            brightness = 0.9
+            contrast = 1.8
+        else:  # Normal brightness
+            brightness = 1.3
+            contrast = 2.0
+        
+        # Adjust for low contrast images
+        if contrast_measure < 30:
+            contrast *= 1.5
+            brightness *= 1.2
+        
+        return enhance_scanned_document(image, brightness, contrast)
+    except Exception as e:
+        logger.error(f"Error in auto_enhance_document: {str(e)}")
+        raise
 
 @app.route('/process-image', methods=['POST'])
 def process_image():
@@ -582,13 +586,21 @@ def process_image():
         logger.debug(f"Process image request received - Content-Type: {request.content_type}")
         
         # Get enhancement mode
-        enhancement_mode = request.form.get('mode', 'auto')  # 'auto' or 'manual'
+        enhancement_mode = request.form.get('mode', 'auto')
         
-        # Get manual parameters if specified
-        brightness = float(request.form.get('brightness', 1.3))
-        contrast = float(request.form.get('contrast', 2.0))
+        # Validate and get parameters
+        try:
+            brightness = float(request.form.get('brightness', 1.3))
+            contrast = float(request.form.get('contrast', 2.0))
+            if brightness <= 0 or contrast <= 0:
+                raise ValueError("Brightness and contrast must be positive values")
+        except ValueError as e:
+            return jsonify({
+                "error": "Invalid parameters",
+                "details": str(e)
+            }), 400
         
-        # Handle file upload - improved handling
+        # Handle file upload
         file_bytes = None
         
         if 'file' in request.files and request.files['file'].filename:
@@ -604,11 +616,9 @@ def process_image():
                 if 'uri' in image_data:
                     image_uri = image_data['uri']
                     if image_uri.startswith('file://'):
-                        with open(image_uri[7:], 'rb') as f:
-                            file_bytes = f.read()
-                    else:
-                        with open(image_uri, 'rb') as f:
-                            file_bytes = f.read()
+                        image_uri = image_uri[7:]
+                    with open(image_uri, 'rb') as f:
+                        file_bytes = f.read()
             except (json.JSONDecodeError, FileNotFoundError):
                 # Try base64 format
                 try:
@@ -621,7 +631,6 @@ def process_image():
                     logger.error(f"Failed to decode base64 data: {e}")
 
         if file_bytes is None or len(file_bytes) == 0:
-            logger.error("No valid file data found in request")
             return jsonify({
                 "error": "No file uploaded",
                 "details": "No valid file data found in the request"
@@ -632,7 +641,6 @@ def process_image():
         image = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
         
         if image is None:
-            logger.error("Failed to decode image data")
             return jsonify({
                 "error": "Invalid image format",
                 "details": "Could not decode the image data. Supported formats: JPG, PNG, BMP, TIFF"
@@ -647,7 +655,7 @@ def process_image():
         else:
             enhanced_image = enhance_scanned_document(image, brightness, contrast)
             logger.debug(f"Applied manual enhancement - brightness: {brightness}, contrast: {contrast}")
-        
+
         # Encode to high-quality JPEG
         encode_params = [
             cv2.IMWRITE_JPEG_QUALITY, 98,
@@ -657,7 +665,6 @@ def process_image():
         success, buffer = cv2.imencode('.jpg', enhanced_image, encode_params)
         
         if not success:
-            logger.error("Failed to encode processed image")
             return jsonify({
                 "error": "Encoding error",
                 "details": "Failed to encode the processed image"
