@@ -494,8 +494,11 @@ def enhance_scanned_document(image, brightness=1.2, contrast=1.3):
     Simple brightness and contrast adjustment
     """
     try:
+        # Convert BGR to RGB since we're working with web output
+        img = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+        
         # Convert to float32 for calculations
-        img = image.astype(np.float32)
+        img = img.astype(np.float32)
         
         # Apply brightness
         img = img * brightness
@@ -505,6 +508,9 @@ def enhance_scanned_document(image, brightness=1.2, contrast=1.3):
         
         # Clip values to valid range
         img = np.clip(img, 0, 255).astype(np.uint8)
+        
+        # Convert back to BGR for OpenCV encoding
+        img = cv2.cvtColor(img, cv2.COLOR_RGB2BGR)
         
         return img
 
@@ -532,7 +538,7 @@ def process_image():
     try:
         logger.debug(f"Process image request received - Content-Type: {request.content_type}")
         
-        # Get enhancement mode and parameters
+        # Get enhancement parameters
         brightness = float(request.form.get('brightness', 1.2))
         contrast = float(request.form.get('contrast', 1.3))
         
@@ -588,9 +594,9 @@ def process_image():
         enhanced_image = enhance_scanned_document(image, brightness, contrast)
         logger.debug(f"Applied enhancement - brightness: {brightness}, contrast: {contrast}")
 
-        # Encode to JPEG
+        # Encode to JPEG with quality matching React Native (0.9 = 90%)
         try:
-            success, buffer = cv2.imencode('.jpg', enhanced_image, [cv2.IMWRITE_JPEG_QUALITY, 90])
+            success, buffer = cv2.imencode('.jpg', enhanced_image, [int(cv2.IMWRITE_JPEG_QUALITY), 90])
             
             if not success:
                 return jsonify({
