@@ -10,6 +10,7 @@ import pandas as pd
 from color_chart_utils import ColorChart
 import colorsys
 from sklearn.cluster import KMeans
+import json
 
 # Configure logging
 logging.basicConfig(level=logging.DEBUG)
@@ -657,17 +658,27 @@ def process_image():
             logger.debug(f"Applied manual enhancement - brightness: {brightness}, contrast: {contrast}")
 
         # Encode to high-quality JPEG
-        encode_params = [
-            cv2.IMWRITE_JPEG_QUALITY, 98,
-            cv2.IMWRITE_JPEG_OPTIMIZE, True
-        ]
-        
-        success, buffer = cv2.imencode('.jpg', enhanced_image, encode_params)
-        
-        if not success:
+        try:
+            # Fix: Properly format encode parameters as list of pairs
+            encode_params = [(cv2.IMWRITE_JPEG_QUALITY, 95)]
+            success, buffer = cv2.imencode('.jpg', enhanced_image, encode_params)
+            
+            if not success:
+                logger.error("Failed to encode image with initial parameters, trying fallback")
+                # Fallback to basic encoding if the optimized version fails
+                success, buffer = cv2.imencode('.jpg', enhanced_image)
+                
+            if not success:
+                return jsonify({
+                    "error": "Encoding error",
+                    "details": "Failed to encode the processed image"
+                }), 500
+            
+        except Exception as e:
+            logger.error(f"Error during image encoding: {str(e)}")
             return jsonify({
                 "error": "Encoding error",
-                "details": "Failed to encode the processed image"
+                "details": f"Failed to encode the processed image: {str(e)}"
             }), 500
         
         # Convert to base64
