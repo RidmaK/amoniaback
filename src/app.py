@@ -495,9 +495,9 @@ def process_image():
         logger.debug(f"Files in request: {request.files}")
         logger.debug(f"Form data: {request.form}")
         
-        # Get brightness and contrast parameters with stronger defaults
-        brightness = float(request.form.get('brightness', 1.4))  # Increased default brightness
-        contrast = float(request.form.get('contrast', 1.8))  # Increased default contrast
+        # Get brightness and contrast parameters
+        brightness = float(request.form.get('brightness', 1.6))  # Higher default brightness
+        contrast = float(request.form.get('contrast', 1.4))
         
         # Handle file upload
         file_bytes = None
@@ -549,35 +549,39 @@ def process_image():
         # Convert to float for processing
         image = image.astype(float)
         
-        # First pass: Apply adaptive contrast enhancement
-        # Calculate mean brightness to adapt processing
-        mean_brightness = np.mean(image)
+        # Convert to LAB color space for better brightness adjustment
+        lab = cv2.cvtColor(image.astype(np.uint8), cv2.COLOR_BGR2LAB)
+        l, a, b = cv2.split(lab)
         
-        # Normalize image to 0-1 range for better control
-        image = image / 255.0
+        # Create a mask for dark areas (L channel < 150)
+        dark_mask = l < 150
         
-        # Apply advanced contrast enhancement
-        # This uses a smoother contrast curve that preserves details
-        image = 1.0 / (1.0 + np.exp(-contrast * (image - 0.5)))
+        # Boost dark areas more aggressively
+        l = l.astype(float)
+        l[dark_mask] = cv2.pow(l[dark_mask] / 255.0, 0.6) * 255.0  # Power function to boost shadows
         
-        # Scale back to 0-255 range
-        image = image * 255.0
+        # Apply additional brightness to dark areas
+        l[dark_mask] = l[dark_mask] * 1.7  # Strong brightness boost for dark areas
         
-        # Apply brightness enhancement with highlight protection
-        # This prevents bright areas from getting blown out
-        brightness_factor = brightness * (1.0 - image/255.0 * 0.3)  # Reduce brightness effect in very bright areas
-        image = image * (1.0 + brightness_factor)
+        # Apply general brightness
+        l = l * brightness
         
-        # Second pass: Enhance local contrast
-        # Apply unsharp masking for local contrast enhancement
-        blur = cv2.GaussianBlur(image.astype(np.uint8), (0, 0), 3)
-        unsharp_mask = image - blur
-        image = image + unsharp_mask * 0.5  # Adjust strength of local contrast
+        # Clip L channel
+        l = np.clip(l, 0, 255).astype(np.uint8)
         
-        # Final adjustments
-        # Stretch histogram to use full range while preserving relative relationships
-        p2, p98 = np.percentile(image, (2, 98))
-        image = np.clip((image - p2) / (p98 - p2) * 255.0, 0, 255)
+        # Merge channels back
+        lab = cv2.merge([l, a, b])
+        
+        # Convert back to BGR
+        image = cv2.cvtColor(lab, cv2.COLOR_LAB2BGR)
+        
+        # Apply contrast after brightness adjustment
+        image = image.astype(float)
+        image = (image - 128) * contrast + 128
+        
+        # Final shadow lift using gamma correction
+        gamma = 1.3  # Adjust gamma to lift shadows
+        image = ((image / 255.0) ** (1.0/gamma) * 255.0)
         
         # Ensure we don't have any invalid values
         image = np.clip(image, 0, 255).astype(np.uint8)
