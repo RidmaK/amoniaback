@@ -495,9 +495,9 @@ def process_image():
         logger.debug(f"Files in request: {request.files}")
         logger.debug(f"Form data: {request.form}")
         
-        # Get brightness and contrast parameters
-        brightness = float(request.form.get('brightness', 1.2))
-        contrast = float(request.form.get('contrast', 1.3))
+        # Get brightness and contrast parameters with stronger defaults
+        brightness = float(request.form.get('brightness', 1.4))  # Increased default brightness
+        contrast = float(request.form.get('contrast', 1.8))  # Increased default contrast
         
         # Handle file upload
         file_bytes = None
@@ -549,34 +549,41 @@ def process_image():
         # Convert to float for processing
         image = image.astype(float)
         
-        # Split into BGR channels (OpenCV uses BGR)
-        b, g, r = cv2.split(image)
+        # First pass: Apply adaptive contrast enhancement
+        # Calculate mean brightness to adapt processing
+        mean_brightness = np.mean(image)
         
-        # Detect dark brown pixels
-        # Dark brown detection thresholds
-        is_dark = (r < 100) & (g < 80) & (b < 80)
+        # Normalize image to 0-1 range for better control
+        image = image / 255.0
         
-        # Enhance red channel for dark brown areas
-        r[is_dark] = r[is_dark] * 1.5  # Boost red
-        g[is_dark] = g[is_dark] * 0.8  # Reduce green
-        b[is_dark] = b[is_dark] * 0.8  # Reduce blue
+        # Apply advanced contrast enhancement
+        # This uses a smoother contrast curve that preserves details
+        image = 1.0 / (1.0 + np.exp(-contrast * (image - 0.5)))
         
-        # Merge channels back
-        image = cv2.merge([b, g, r])
+        # Scale back to 0-255 range
+        image = image * 255.0
         
-        # Apply brightness adjustment (higher for dark areas)
-        image[is_dark] = image[is_dark] * (brightness * 1.3)  # Extra brightness for dark areas
-        image[~is_dark] = image[~is_dark] * brightness  # Normal brightness for other areas
+        # Apply brightness enhancement with highlight protection
+        # This prevents bright areas from getting blown out
+        brightness_factor = brightness * (1.0 - image/255.0 * 0.3)  # Reduce brightness effect in very bright areas
+        image = image * (1.0 + brightness_factor)
         
-        # Apply contrast adjustment (higher for dark areas)
-        image[is_dark] = (image[is_dark] - 128) * (contrast * 1.4) + 128  # Extra contrast for dark areas
-        image[~is_dark] = (image[~is_dark] - 128) * contrast + 128  # Normal contrast for other areas
+        # Second pass: Enhance local contrast
+        # Apply unsharp masking for local contrast enhancement
+        blur = cv2.GaussianBlur(image.astype(np.uint8), (0, 0), 3)
+        unsharp_mask = image - blur
+        image = image + unsharp_mask * 0.5  # Adjust strength of local contrast
         
-        # Clip values to valid range
+        # Final adjustments
+        # Stretch histogram to use full range while preserving relative relationships
+        p2, p98 = np.percentile(image, (2, 98))
+        image = np.clip((image - p2) / (p98 - p2) * 255.0, 0, 255)
+        
+        # Ensure we don't have any invalid values
         image = np.clip(image, 0, 255).astype(np.uint8)
         
-        # Encode processed image to base64
-        _, buffer = cv2.imencode('.jpg', image, [cv2.IMWRITE_JPEG_QUALITY, 90])
+        # Encode processed image to base64 with high quality
+        _, buffer = cv2.imencode('.jpg', image, [cv2.IMWRITE_JPEG_QUALITY, 95])
         image_base64 = base64.b64encode(buffer).decode('utf-8')
         
         return jsonify({
