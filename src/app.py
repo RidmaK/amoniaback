@@ -489,42 +489,22 @@ def validate_color():
             "details": str(e)
         }), 500
 
-def enhance_scanned_document(image, brightness=1.4, contrast=1.5):
+def enhance_scanned_document(image, brightness=1.2, contrast=1.3):
     """
-    Basic but effective image enhancement
+    Simple brightness and contrast adjustment
     """
     try:
-        # Convert to float for better precision
+        # Convert to float32 for calculations
         img = image.astype(np.float32)
         
-        # Step 1: Convert to LAB color space for better brightness adjustment
-        lab = cv2.cvtColor(img.astype(np.uint8), cv2.COLOR_BGR2LAB)
-        l, a, b = cv2.split(lab)
+        # Apply brightness
+        img = img * brightness
         
-        # Step 2: Apply CLAHE to enhance local contrast
-        clahe = cv2.createCLAHE(clipLimit=2.5, tileGridSize=(8, 8))
-        l = clahe.apply(l)
+        # Apply contrast
+        img = (img - 128) * contrast + 128
         
-        # Step 3: Merge back and convert to BGR
-        enhanced = cv2.merge([l, a, b])
-        img = cv2.cvtColor(enhanced, cv2.COLOR_LAB2BGR).astype(np.float32)
-        
-        # Step 4: Adjust brightness
-        img = cv2.multiply(img, brightness)
-        
-        # Step 5: Adjust contrast
-        # Formula: (x - mean) * contrast + mean
-        mean = np.mean(img)
-        img = (img - mean) * contrast + mean
-        
-        # Ensure valid range
+        # Clip values to valid range
         img = np.clip(img, 0, 255).astype(np.uint8)
-        
-        # Optional: Very light sharpening for clarity
-        kernel = np.array([[-0.5,-0.5,-0.5],
-                         [-0.5, 5,-0.5],
-                         [-0.5,-0.5,-0.5]]) / 1.0
-        img = cv2.filter2D(img, -1, kernel)
         
         return img
 
@@ -534,39 +514,12 @@ def enhance_scanned_document(image, brightness=1.4, contrast=1.5):
 
 def auto_enhance_document(image):
     """
-    Automatic image enhancement with optimized parameters
+    Automatic image enhancement with default parameters
     """
     try:
-        # Convert to LAB for better brightness analysis
-        lab = cv2.cvtColor(image, cv2.COLOR_BGR2LAB)
-        l, _, _ = cv2.split(lab)
-        
-        # Calculate image statistics
-        mean_brightness = np.mean(l)
-        std_brightness = np.std(l)
-        
-        # Determine enhancement parameters
-        if mean_brightness < 100:  # Dark image
-            if std_brightness < 30:  # Low contrast
-                brightness = 1.7
-                contrast = 1.8
-            else:  # Good contrast
-                brightness = 1.5
-                contrast = 1.4
-        elif mean_brightness < 150:  # Medium brightness
-            if std_brightness < 30:  # Low contrast
-                brightness = 1.3
-                contrast = 1.6
-            else:  # Good contrast
-                brightness = 1.2
-                contrast = 1.3
-        else:  # Bright image
-            if std_brightness < 30:  # Low contrast
-                brightness = 1.1
-                contrast = 1.4
-            else:  # Good contrast
-                brightness = 1.0
-                contrast = 1.2
+        # Use default values that match the React Native code
+        brightness = 1.2
+        contrast = 1.3
         
         return enhance_scanned_document(image, brightness, contrast)
         
@@ -579,20 +532,9 @@ def process_image():
     try:
         logger.debug(f"Process image request received - Content-Type: {request.content_type}")
         
-        # Get enhancement mode
-        enhancement_mode = request.form.get('mode', 'auto')
-        
-        # Validate and get parameters
-        try:
-            brightness = float(request.form.get('brightness', 1.3))
-            contrast = float(request.form.get('contrast', 2.0))
-            if brightness <= 0 or contrast <= 0:
-                raise ValueError("Brightness and contrast must be positive values")
-        except ValueError as e:
-            return jsonify({
-                "error": "Invalid parameters",
-                "details": str(e)
-            }), 400
+        # Get enhancement mode and parameters
+        brightness = float(request.form.get('brightness', 1.2))
+        contrast = float(request.form.get('contrast', 1.3))
         
         # Handle file upload
         file_bytes = None
@@ -642,24 +584,15 @@ def process_image():
 
         logger.debug(f"Image decoded successfully: {image.shape}")
 
-        # Apply enhancement based on mode
-        if enhancement_mode == 'auto':
-            enhanced_image = auto_enhance_document(image)
-            logger.debug("Applied automatic enhancement")
-        else:
-            enhanced_image = enhance_scanned_document(image, brightness, contrast)
-            logger.debug(f"Applied manual enhancement - brightness: {brightness}, contrast: {contrast}")
-
-        # Ensure the enhanced image is in the correct format and range
-        enhanced_image = np.clip(enhanced_image, 0, 255).astype(np.uint8)
+        # Apply enhancement
+        enhanced_image = enhance_scanned_document(image, brightness, contrast)
+        logger.debug(f"Applied enhancement - brightness: {brightness}, contrast: {contrast}")
 
         # Encode to JPEG
         try:
-            # Simple encoding first
-            success, buffer = cv2.imencode('.jpg', enhanced_image)
+            success, buffer = cv2.imencode('.jpg', enhanced_image, [cv2.IMWRITE_JPEG_QUALITY, 90])
             
             if not success:
-                logger.error("Failed to encode image")
                 return jsonify({
                     "error": "Encoding error",
                     "details": "Failed to encode the processed image"
@@ -688,10 +621,8 @@ def process_image():
             "success": True,
             "imageUri": f"data:image/jpeg;base64,{image_base64}",
             "processingInfo": {
-                "mode": enhancement_mode,
-                "originalSize": image.shape,
-                "brightness": brightness if enhancement_mode == 'manual' else 'auto',
-                "contrast": contrast if enhancement_mode == 'manual' else 'auto'
+                "brightness": brightness,
+                "contrast": contrast
             }
         })
 
