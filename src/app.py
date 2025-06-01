@@ -546,12 +546,31 @@ def process_image():
                 "details": "Could not decode the image data"
             }), 400
 
-        # Apply brightness adjustment
+        # Convert to float for processing
         image = image.astype(float)
-        image = image * brightness
         
-        # Apply contrast adjustment
-        image = (image - 128) * contrast + 128
+        # Split into BGR channels (OpenCV uses BGR)
+        b, g, r = cv2.split(image)
+        
+        # Detect dark brown pixels
+        # Dark brown detection thresholds
+        is_dark = (r < 100) & (g < 80) & (b < 80)
+        
+        # Enhance red channel for dark brown areas
+        r[is_dark] = r[is_dark] * 1.5  # Boost red
+        g[is_dark] = g[is_dark] * 0.8  # Reduce green
+        b[is_dark] = b[is_dark] * 0.8  # Reduce blue
+        
+        # Merge channels back
+        image = cv2.merge([b, g, r])
+        
+        # Apply brightness adjustment (higher for dark areas)
+        image[is_dark] = image[is_dark] * (brightness * 1.3)  # Extra brightness for dark areas
+        image[~is_dark] = image[~is_dark] * brightness  # Normal brightness for other areas
+        
+        # Apply contrast adjustment (higher for dark areas)
+        image[is_dark] = (image[is_dark] - 128) * (contrast * 1.4) + 128  # Extra contrast for dark areas
+        image[~is_dark] = (image[~is_dark] - 128) * contrast + 128  # Normal contrast for other areas
         
         # Clip values to valid range
         image = np.clip(image, 0, 255).astype(np.uint8)
