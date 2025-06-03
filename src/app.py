@@ -225,8 +225,19 @@ def predict():
                 
             logger.debug(f"Successfully decoded image with shape: {image.shape}")
             
-            # Get color from center circle
-            dominant_color = get_center_circle_color(image)
+            # Enhance the image with brightness and contrast
+            enhanced_image = enhance_scanned_document(image, brightness=1.2, contrast=1.3)
+            
+            # Save enhanced image and convert to base64
+            success, buffer = cv2.imencode('.jpg', enhanced_image, [int(cv2.IMWRITE_JPEG_QUALITY), 90])
+            if not success:
+                raise Exception("Failed to encode enhanced image")
+            
+            enhanced_base64 = base64.b64encode(buffer).decode('utf-8')
+            enhanced_image_uri = f"data:image/jpeg;base64,{enhanced_base64}"
+            
+            # Get color from center circle using the enhanced image
+            dominant_color = get_center_circle_color(enhanced_image)
             if dominant_color is None:
                 return jsonify({
                     "error": "Invalid sample",
@@ -271,6 +282,7 @@ def predict():
                 "ammonia_concentration": match_concentration,
                 "success": True,
                 "saved_image": img_filename,
+                "enhanced_image": enhanced_image_uri,
                 "original_color":  {
                     "hex": color_hex,
                     "rgb": {
