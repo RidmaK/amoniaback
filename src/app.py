@@ -514,7 +514,7 @@ def enhance_scanned_document(image, brightness=1.8, contrast=2.0, temperature=1.
         
         # Calculate image brightness to determine enhancement level
         avg_brightness = np.mean(img)
-        darkness_factor = max(1.0, (128 - avg_brightness) / 64)  # Higher factor for darker images
+        darkness_factor = max(1.0, (128 - avg_brightness) / 64)
         
         logger.debug(f"Average brightness: {avg_brightness:.2f}, Darkness factor: {darkness_factor:.2f}")
         
@@ -522,64 +522,44 @@ def enhance_scanned_document(image, brightness=1.8, contrast=2.0, temperature=1.
         adaptive_brightness = brightness * darkness_factor
         img = img * adaptive_brightness
         
-        # Gamma correction for better mid-tone handling
+        # Gamma correction
+        img = np.clip(img, 0, 255)  # Clip before gamma
         img_normalized = img / 255.0
-        img_gamma = np.power(img_normalized, gamma) * 255.0
-        img = img_gamma
+        img = np.power(img_normalized, gamma) * 255.0
         
         # Split channels for color enhancement
-        r, g, b = cv2.split(img)
+        b, g, r = cv2.split(img.astype(np.uint8))
         
-        # Enhanced color correction with adaptive red boost
-        red_boost = 30 + (darkness_factor * 20)  # More red boost for darker images
+        # Convert to float32 for calculations
+        r = r.astype(np.float32)
+        g = g.astype(np.float32)
+        b = b.astype(np.float32)
+        
+        # Enhanced color correction
+        red_boost = min(30 + (darkness_factor * 20), 50)  # Cap red boost
         r = r + red_boost
-        g = g * 0.92  # Reduce green slightly
-        b = b * 0.88  # Reduce blue more
+        g = g * 0.92
+        b = b * 0.88
         
-        # Merge channels back
-        img = cv2.merge([r, g, b])
-        
-        # Adaptive contrast enhancement
-        adaptive_contrast = contrast * (1 + darkness_factor * 0.3)
-        img = (img - 128) * adaptive_contrast + 128
-        
-        # Temperature adjustment (warmer for better color detection)
-        r, g, b = cv2.split(img)
+        # Temperature adjustment
         if temperature > 1.0:
             r = r * temperature
             b = b / temperature
-        img = cv2.merge([r, g, b])
         
-        # Additional brightness boost for very dark images
+        # Merge channels back
+        img = cv2.merge([b, g, r])
+        
+        # Adaptive contrast enhancement
+        adaptive_contrast = min(contrast * (1 + darkness_factor * 0.3), 2.5)  # Cap contrast
+        img = (img - 128) * adaptive_contrast + 128
+        
+        # Additional brightness boost for dark images
         if avg_brightness < 100:
-            extra_brightness = (100 - avg_brightness) * 0.5
+            extra_brightness = min((100 - avg_brightness) * 0.3, 30)  # Cap extra brightness
             img = img + extra_brightness
             logger.debug(f"Applied extra brightness: {extra_brightness:.2f}")
         
-        # Histogram equalization for better contrast distribution
-        img_lab = cv2.cvtColor(img.astype(np.uint8), cv2.COLOR_RGB2LAB)
-        l, a, b_channel = cv2.split(img_lab)
-        
-        # Apply CLAHE (Contrast Limited Adaptive Histogram Equalization) to L channel
-        clahe = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8,8))
-        l = clahe.apply(l)
-        
-        # Merge back
-        img_lab = cv2.merge([l, a, b_channel])
-        img = cv2.cvtColor(img_lab, cv2.COLOR_LAB2RGB)
-        
-        # Final saturation boost for better color separation
-        img_hsv = cv2.cvtColor(img, cv2.COLOR_RGB2HSV)
-        h, s, v = cv2.split(img_hsv)
-        
-        # Increase saturation for better color detection
-        s = s * 1.3
-        s = np.clip(s, 0, 255)
-        
-        img_hsv = cv2.merge([h, s, v])
-        img = cv2.cvtColor(img_hsv, cv2.COLOR_HSV2RGB)
-        
-        # Clip values to valid range
+        # Clip values before conversion
         img = np.clip(img, 0, 255).astype(np.uint8)
         
         # Convert back to BGR for OpenCV compatibility
@@ -590,8 +570,7 @@ def enhance_scanned_document(image, brightness=1.8, contrast=2.0, temperature=1.
         
     except Exception as e:
         logger.error(f"Error in enhance_scanned_document: {str(e)}")
-        # Return original image if enhancement fails
-        return image
+        return image  # Return original image if enhancement fails
 
 def auto_enhance_document(image):
     """
