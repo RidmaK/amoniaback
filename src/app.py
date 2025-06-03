@@ -226,7 +226,7 @@ def predict():
             logger.debug(f"Successfully decoded image with shape: {image.shape}")
             
             # Enhance the image with brightness, contrast, and temperature
-            enhanced_image = enhance_scanned_document(image, brightness=1.2, contrast=1.3, temperature=1.1)
+            enhanced_image = enhance_scanned_document(image)
             
             # Save enhanced image and convert to base64
             success, buffer = cv2.imencode('.jpg', enhanced_image, [int(cv2.IMWRITE_JPEG_QUALITY), 90])
@@ -501,9 +501,9 @@ def validate_color():
             "details": str(e)
         }), 500
 
-def enhance_scanned_document(image, brightness=1.2, contrast=1.3, temperature=1.1):
+def enhance_scanned_document(image, brightness=1.4, contrast=1.5, temperature=1.1):
     """
-    Image enhancement with brightness, contrast, temperature and light red tint
+    Image enhancement with increased brightness, high contrast, and light red tint
     """
     try:
         # Convert BGR to RGB since we're working with web output
@@ -512,30 +512,35 @@ def enhance_scanned_document(image, brightness=1.2, contrast=1.3, temperature=1.
         # Convert to float32 for calculations
         img = img.astype(np.float32)
         
-        # Apply brightness
+        # Apply higher brightness first
         img = img * brightness
         
-        # Apply contrast
-        img = (img - 128) * contrast + 128
-        
-        # Split channels
+        # Split channels for initial red tint
         b, g, r = cv2.split(img)
         
+        # Create light red tint effect
+        r = r + 45  # Add more base red tint
+        g = g * 0.95  # Very slightly reduce green
+        b = b * 0.95  # Very slightly reduce blue
+        
+        # Merge channels back
+        img = cv2.merge([b, g, r])
+        
+        # Apply higher contrast after tint
+        img = (img - 128) * contrast + 128
+        
         # Apply temperature (color temperature)
+        b, g, r = cv2.split(img)
         if temperature > 1.0:
             r = r * temperature
             b = b / temperature
         else:
             r = r / (2 - temperature)
             b = b * (2 - temperature)
-            
-        # Create light red tint effect
-        r = r + 30  # Add a base red tint
-        g = g * 0.9  # Slightly reduce green
-        b = b * 0.9  # Slightly reduce blue
-        
-        # Merge channels back
         img = cv2.merge([b, g, r])
+        
+        # Additional brightness boost for lighter overall image
+        img = img + 15
         
         # Clip values to valid range
         img = np.clip(img, 0, 255).astype(np.uint8)
