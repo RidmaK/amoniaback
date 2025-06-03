@@ -225,8 +225,8 @@ def predict():
                 
             logger.debug(f"Successfully decoded image with shape: {image.shape}")
             
-            # Enhance the image with brightness and contrast
-            enhanced_image = enhance_scanned_document(image, brightness=1.2, contrast=1.3)
+            # Enhance the image with brightness, contrast, and temperature
+            enhanced_image = enhance_scanned_document(image, brightness=1.2, contrast=1.3, temperature=1.3)
             
             # Save enhanced image and convert to base64
             success, buffer = cv2.imencode('.jpg', enhanced_image, [int(cv2.IMWRITE_JPEG_QUALITY), 90])
@@ -501,9 +501,9 @@ def validate_color():
             "details": str(e)
         }), 500
 
-def enhance_scanned_document(image, brightness=1.2, contrast=1.3):
+def enhance_scanned_document(image, brightness=1.2, contrast=1.3, temperature=1.0):
     """
-    Simple brightness and contrast adjustment
+    Simple brightness, contrast, and temperature adjustment
     """
     try:
         # Convert BGR to RGB since we're working with web output
@@ -517,6 +517,18 @@ def enhance_scanned_document(image, brightness=1.2, contrast=1.3):
         
         # Apply contrast
         img = (img - 128) * contrast + 128
+        
+        # Apply temperature (color temperature)
+        # Temperature > 1 makes image warmer (more red/yellow)
+        # Temperature < 1 makes image cooler (more blue)
+        b, g, r = cv2.split(img)
+        if temperature > 1.0:
+            r = r * temperature
+            b = b / temperature
+        else:
+            r = r / (2 - temperature)
+            b = b * (2 - temperature)
+        img = cv2.merge([b, g, r])
         
         # Clip values to valid range
         img = np.clip(img, 0, 255).astype(np.uint8)
@@ -538,8 +550,9 @@ def auto_enhance_document(image):
         # Use default values that match the React Native code
         brightness = 1.2
         contrast = 1.3
+        temperature = 1.1  # Slightly warmer by default
         
-        return enhance_scanned_document(image, brightness, contrast)
+        return enhance_scanned_document(image, brightness, contrast, temperature)
         
     except Exception as e:
         logger.error(f"Error in auto_enhance_document: {str(e)}")
@@ -553,6 +566,7 @@ def process_image():
         # Get enhancement parameters
         brightness = float(request.form.get('brightness', 1.2))
         contrast = float(request.form.get('contrast', 1.3))
+        temperature = float(request.form.get('temperature', 1.1))
         
         # Handle file upload
         file_bytes = None
@@ -603,8 +617,8 @@ def process_image():
         logger.debug(f"Image decoded successfully: {image.shape}")
 
         # Apply enhancement
-        enhanced_image = enhance_scanned_document(image, brightness, contrast)
-        logger.debug(f"Applied enhancement - brightness: {brightness}, contrast: {contrast}")
+        enhanced_image = enhance_scanned_document(image, brightness, contrast, temperature)
+        logger.debug(f"Applied enhancement - brightness: {brightness}, contrast: {contrast}, temperature: {temperature}")
 
         # Encode to JPEG with quality matching React Native (0.9 = 90%)
         try:
@@ -640,7 +654,8 @@ def process_image():
             "imageUri": f"data:image/jpeg;base64,{image_base64}",
             "processingInfo": {
                 "brightness": brightness,
-                "contrast": contrast
+                "contrast": contrast,
+                "temperature": temperature
             }
         })
 
