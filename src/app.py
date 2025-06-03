@@ -226,7 +226,7 @@ def predict():
             logger.debug(f"Successfully decoded image with shape: {image.shape}")
             
             # Enhance the image with brightness, contrast, and temperature
-            enhanced_image = enhance_scanned_document(image, brightness=1.2, contrast=1.3, temperature=1.3)
+            enhanced_image = enhance_scanned_document(image, brightness=1.2, contrast=1.3, temperature=1.1)
             
             # Save enhanced image and convert to base64
             success, buffer = cv2.imencode('.jpg', enhanced_image, [int(cv2.IMWRITE_JPEG_QUALITY), 90])
@@ -501,9 +501,9 @@ def validate_color():
             "details": str(e)
         }), 500
 
-def enhance_scanned_document(image, brightness=1.2, contrast=1.3, temperature=1.0):
+def enhance_scanned_document(image, brightness=1.2, contrast=1.3, temperature=1.3):
     """
-    Simple brightness, contrast, and temperature adjustment
+    Image enhancement with brightness, contrast, temperature and color balance adjustment
     """
     try:
         # Convert BGR to RGB since we're working with web output
@@ -518,16 +518,22 @@ def enhance_scanned_document(image, brightness=1.2, contrast=1.3, temperature=1.
         # Apply contrast
         img = (img - 128) * contrast + 128
         
-        # Apply temperature (color temperature)
-        # Temperature > 1 makes image warmer (more red/yellow)
-        # Temperature < 1 makes image cooler (more blue)
+        # Split channels
         b, g, r = cv2.split(img)
+        
+        # Apply temperature (color temperature)
         if temperature > 1.0:
             r = r * temperature
             b = b / temperature
         else:
             r = r / (2 - temperature)
             b = b * (2 - temperature)
+            
+        # Reduce green and blue channels to enhance redness
+        g = g * 0.8  # Reduce green by 20%
+        b = b * 0.8  # Reduce blue by 20%
+        
+        # Merge channels back
         img = cv2.merge([b, g, r])
         
         # Clip values to valid range
