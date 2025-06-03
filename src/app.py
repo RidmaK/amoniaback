@@ -501,9 +501,9 @@ def validate_color():
             "details": str(e)
         }), 500
 
-def enhance_scanned_document(image, brightness=1.2, contrast=1.3, temperature=1.3):
+def enhance_scanned_document(image, brightness=1.2, contrast=1.3, temperature=1.1):
     """
-    Image enhancement with brightness, contrast, temperature and color balance adjustment
+    Image enhancement with brightness, contrast, temperature and light red tint
     """
     try:
         # Convert BGR to RGB since we're working with web output
@@ -529,9 +529,10 @@ def enhance_scanned_document(image, brightness=1.2, contrast=1.3, temperature=1.
             r = r / (2 - temperature)
             b = b * (2 - temperature)
             
-        # Reduce green and blue channels to enhance redness
-        g = g * 0.8  # Reduce green by 20%
-        b = b * 0.8  # Reduce blue by 20%
+        # Create light red tint effect
+        r = r + 30  # Add a base red tint
+        g = g * 0.9  # Slightly reduce green
+        b = b * 0.9  # Slightly reduce blue
         
         # Merge channels back
         img = cv2.merge([b, g, r])
