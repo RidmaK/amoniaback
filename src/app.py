@@ -89,18 +89,11 @@ def get_center_circle_color(image, circle_radius_percent=0.1):
     if len(pixels) == 0:
         return None
     
-    # Perform K-means clustering
-    kmeans = KMeans(n_clusters=3, random_state=42)
-    kmeans.fit(pixels)
-    
-    # Get the dominant color (cluster with most points)
-    colors = kmeans.cluster_centers_
-    labels = kmeans.labels_
-    counts = np.bincount(labels)
-    dominant_color = colors[counts.argmax()]
+    # Calculate mean color instead of using K-means
+    mean_color = np.mean(pixels, axis=0)
     
     # Convert to Python native int type
-    return [int(x) for x in dominant_color]
+    return [int(x) for x in mean_color]
 
 def find_concentration_by_primary_color(rgb, color_chart):
     """Find concentration based on the highest RGB value"""
@@ -551,95 +544,56 @@ def validate_color():
             "details": str(e)
         }), 500
 
-def enhance_scanned_document(image, brightness=1.8, contrast=2.0, temperature=1.2, gamma=0.8):
+def enhance_scanned_document(image, brightness=1.2, contrast=1.3, temperature=1.1, gamma=0.9):
     """
-    Enhanced image processing with adaptive enhancement based on image darkness and luminance preservation
+    Enhanced image processing with minimal color distortion and center area preservation
     """
     try:
+        # Get image dimensions for center area preservation
+        height, width = image.shape[:2]
+        center_x, center_y = width // 2, height // 2
+        radius = int(min(width, height) * 0.1)  # 10% of image size
+        
+        # Create a mask for the center circle
+        y, x = np.ogrid[:height, :width]
+        dist_from_center = np.sqrt((x - center_x)**2 + (y - center_y)**2)
+        center_mask = dist_from_center <= radius
+        
+        # Store original center area
+        original_center = image[center_mask].copy()
+        
         # Convert BGR to RGB for processing
         img = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
-        
-        # Convert to float32 for calculations
         img = img.astype(np.float32)
         
-        # Calculate initial luminance
-        initial_luminance = 0.299 * img[:,:,0] + 0.587 * img[:,:,1] + 0.114 * img[:,:,2]
+        # More conservative enhancement
+        # Adjust brightness
+        img = img * brightness
         
-        # Calculate image brightness to determine enhancement level
-        avg_brightness = np.mean(img)
-        darkness_factor = max(1.0, (128 - avg_brightness) / 64)
+        # Adjust contrast
+        img = (img - 128) * contrast + 128
         
-        logger.debug(f"Average brightness: {avg_brightness:.2f}, Darkness factor: {darkness_factor:.2f}")
-        
-        # Convert to HSL for better luminance handling
+        # Gamma correction
+        img = np.clip(img, 0, 255)
         img_normalized = img / 255.0
-        max_vals = np.max(img_normalized, axis=2)
-        min_vals = np.min(img_normalized, axis=2)
+        img = np.power(img_normalized, gamma) * 255.0
         
-        # Calculate lightness
-        lightness = (max_vals + min_vals) / 2
-        delta = max_vals - min_vals
-        
-        # Calculate saturation
-        saturation = np.zeros_like(lightness)
-        mask = delta != 0
-        saturation[mask] = delta[mask] / (1 - np.abs(2 * lightness[mask] - 1))
-        
-        # Enhance lightness while preserving color relationships
-        enhanced_lightness = lightness ** gamma
-        enhanced_lightness = enhanced_lightness * brightness * darkness_factor
-        
-        # Adjust contrast on lightness channel
-        enhanced_lightness = (enhanced_lightness - 0.5) * contrast + 0.5
-        enhanced_lightness = np.clip(enhanced_lightness, 0, 1)
-        
-        # Reconstruct color with enhanced lightness
-        for i in range(3):
-            img_normalized[:,:,i] = img_normalized[:,:,i] * (enhanced_lightness / (lightness + 1e-6))
-        
-        # Temperature adjustment with luminance preservation
+        # Temperature adjustment (more subtle)
         if temperature > 1.0:
-            # Calculate luminance before temperature adjustment
-            pre_temp_luminance = 0.299 * img_normalized[:,:,0] + 0.587 * img_normalized[:,:,1] + 0.114 * img_normalized[:,:,2]
-            
-            # Apply temperature
-            img_normalized[:,:,0] = img_normalized[:,:,0] * temperature  # Red
-            img_normalized[:,:,2] = img_normalized[:,:,2] / temperature  # Blue
-            
-            # Calculate luminance after temperature adjustment
-            post_temp_luminance = 0.299 * img_normalized[:,:,0] + 0.587 * img_normalized[:,:,1] + 0.114 * img_normalized[:,:,2]
-            
-            # Correct luminance
-            luminance_ratio = pre_temp_luminance / (post_temp_luminance + 1e-6)
-            for i in range(3):
-                img_normalized[:,:,i] = img_normalized[:,:,i] * luminance_ratio
+            img[:,:,0] = img[:,:,0] * temperature  # Red
+            img[:,:,2] = img[:,:,2] / temperature  # Blue
         
-        # Convert back to 0-255 range
-        img = np.clip(img_normalized * 255.0, 0, 255).astype(np.uint8)
+        # Clip values
+        img = np.clip(img, 0, 255).astype(np.uint8)
         
-        # Enhance local contrast using CLAHE
-        lab = cv2.cvtColor(img, cv2.COLOR_RGB2LAB)
-        l, a, b = cv2.split(lab)
-        clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8,8))
-        l = clahe.apply(l)
-        lab = cv2.merge([l, a, b])
-        img = cv2.cvtColor(lab, cv2.COLOR_LAB2RGB)
+        # Convert back to BGR
+        enhanced = cv2.cvtColor(img, cv2.COLOR_RGB2BGR)
         
-        # Calculate final luminance
-        final_luminance = 0.299 * img[:,:,0] + 0.587 * img[:,:,1] + 0.114 * img[:,:,2]
+        # Restore the original center area
+        enhanced[center_mask] = original_center
         
-        # Preserve original color relationships while maintaining enhanced luminance
-        luminance_ratio = final_luminance / (initial_luminance + 1e-6)
-        luminance_ratio = np.clip(luminance_ratio, 0.5, 2.0)  # Limit the adjustment range
-        
-        for i in range(3):
-            img[:,:,i] = np.clip(img[:,:,i] * luminance_ratio, 0, 255).astype(np.uint8)
-        
-        # Convert back to BGR for OpenCV compatibility
-        img = cv2.cvtColor(img, cv2.COLOR_RGB2BGR)
-        
-        logger.debug("Image enhancement completed successfully with luminance preservation")
-        return img
+        logger.debug("Image enhancement completed with center area preservation")
+        return enhanced
         
     except Exception as e:
         logger.error(f"Error in enhance_scanned_document: {str(e)}")
