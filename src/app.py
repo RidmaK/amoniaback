@@ -10,6 +10,7 @@ import pandas as pd
 from color_chart_utils import ColorChart
 import colorsys
 from sklearn.cluster import KMeans
+from sklearn.linear_model import LinearRegression
 import json
 
 # Configure logging
@@ -136,6 +137,51 @@ def find_concentration_by_primary_color(rgb, color_chart):
         'distance': float(dists[idx])
     }
 
+def calculate_luminance_intensity(r, g, b):
+    """Calculate luminance intensity using the standard formula"""
+    return 0.299 * r + 0.587 * g + 0.114 * b
+
+def fit_concentration_model(color_chart):
+    """Fit a linear regression model using the color chart data"""
+    # Get RGB values and concentrations from color chart
+    rgb_values = color_chart.df[['Red', 'Green', 'Blue']].values
+    concentrations = color_chart.df['Concentration_mg_L'].values
+    
+    # Calculate intensities
+    intensities = np.array([calculate_luminance_intensity(r, g, b) for r, g, b in rgb_values])
+    
+    # Fit linear regression model
+    model = LinearRegression()
+    model.fit(intensities.reshape(-1, 1), concentrations)
+    
+    return model, intensities
+
+def predict_concentration_from_intensity(r, g, b, color_chart):
+    """Predict concentration using luminance intensity and linear regression"""
+    # Calculate intensity for the input color
+    intensity = calculate_luminance_intensity(r, g, b)
+    
+    # Fit model using color chart data
+    model, chart_intensities = fit_concentration_model(color_chart)
+    
+    # Predict concentration
+    predicted_concentration = model.predict([[intensity]])[0]
+    
+    # Find closest color in chart based on intensity
+    closest_idx = np.argmin(np.abs(chart_intensities - intensity))
+    closest_match = {
+        'concentration': float(color_chart.df.iloc[closest_idx]['Concentration_mg_L']),
+        'hex': str(color_chart.df.iloc[closest_idx]['Hex']),
+        'rgb': (
+            int(color_chart.df.iloc[closest_idx]['Red']),
+            int(color_chart.df.iloc[closest_idx]['Green']),
+            int(color_chart.df.iloc[closest_idx]['Blue'])
+        ),
+        'distance': float(abs(chart_intensities[closest_idx] - intensity))
+    }
+    
+    return predicted_concentration, closest_match, intensity
+
 @app.route('/predict', methods=['POST'])
 def predict():
     try:
@@ -249,37 +295,35 @@ def predict():
             color_hex = '#{:02x}{:02x}{:02x}'.format(r, g, b)
             logger.debug(f"Detected color: {color_hex} RGB: ({r},{g},{b})")
 
-            # Find concentration based on primary color
-            match = find_concentration_by_primary_color((r, g, b), color_chart)
+            # Use new intensity-based prediction method
+            predicted_concentration, match, intensity = predict_concentration_from_intensity(r, g, b, color_chart)
+            logger.debug(f"Predicted concentration: {predicted_concentration:.2f} mg/L (intensity: {intensity:.2f})")
             logger.debug(f"Matched chart color: {match['hex']} RGB: {match['rgb']} -> {match['concentration']} mg/L (distance: {match['distance']:.2f})")
-
-            # Convert match values to Python native types
-            match_rgb = [int(x) for x in match['rgb']]
-            match_distance = float(match['distance'])
-            match_concentration = float(match['concentration'])
 
             # Save to dataset
             if not os.path.exists(DATASET_PATH):
                 pd.DataFrame(columns=[
                     'timestamp', 'image_path', 'concentration', 
-                    'color_hex', 'color_r', 'color_g', 'color_b'
+                    'color_hex', 'color_r', 'color_g', 'color_b',
+                    'intensity'
                 ]).to_csv(DATASET_PATH, index=False)
             
             new_data = pd.DataFrame([{
                 'timestamp': datetime.now().isoformat(),
                 'image_path': img_path,
-                'concentration': match_concentration,
-                'color_hex': match['hex'],
+                'concentration': predicted_concentration,
+                'color_hex': color_hex,
                 'color_r': r,
                 'color_g': g,
-                'color_b': b
+                'color_b': b,
+                'intensity': intensity
             }])
             new_data.to_csv(DATASET_PATH, mode='a', header=False, index=False)
             
             history = get_concentration_history()
             
             return jsonify({
-                "ammonia_concentration": match_concentration,
+                "ammonia_concentration": predicted_concentration,
                 "success": True,
                 "saved_image": img_filename,
                 "enhanced_image": enhanced_image_uri,
@@ -289,17 +333,18 @@ def predict():
                         "r": r,
                         "g": g,
                         "b": b
-                    }
+                    },
+                    "intensity": intensity
                 },
                 "color": {
                     "hex": str(match['hex']),
                     "rgb": {
-                        "r": match_rgb[0],
-                        "g": match_rgb[1],
-                        "b": match_rgb[2]
+                        "r": match['rgb'][0],
+                        "g": match['rgb'][1],
+                        "b": match['rgb'][2]
                     }
                 },
-                "distance": match_distance,
+                "distance": match['distance'],
                 "history": history,
                 "chart": [
                     {
@@ -309,7 +354,12 @@ def predict():
                             'r': int(row['Red']),
                             'g': int(row['Green']),
                             'b': int(row['Blue'])
-                        }
+                        },
+                        'intensity': float(calculate_luminance_intensity(
+                            int(row['Red']), 
+                            int(row['Green']), 
+                            int(row['Blue'])
+                        ))
                     } for _, row in color_chart.df.iterrows()
                 ]
             })
