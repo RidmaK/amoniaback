@@ -553,7 +553,7 @@ def validate_color():
 
 def enhance_scanned_document(image, brightness=1.8, contrast=2.0, temperature=1.2, gamma=0.8):
     """
-    Enhanced image processing with adaptive enhancement based on image darkness
+    Enhanced image processing with adaptive enhancement based on image darkness and luminance preservation
     """
     try:
         # Convert BGR to RGB for processing
@@ -562,60 +562,83 @@ def enhance_scanned_document(image, brightness=1.8, contrast=2.0, temperature=1.
         # Convert to float32 for calculations
         img = img.astype(np.float32)
         
+        # Calculate initial luminance
+        initial_luminance = 0.299 * img[:,:,0] + 0.587 * img[:,:,1] + 0.114 * img[:,:,2]
+        
         # Calculate image brightness to determine enhancement level
         avg_brightness = np.mean(img)
         darkness_factor = max(1.0, (128 - avg_brightness) / 64)
         
         logger.debug(f"Average brightness: {avg_brightness:.2f}, Darkness factor: {darkness_factor:.2f}")
         
-        # Adaptive brightness adjustment
-        adaptive_brightness = brightness * darkness_factor
-        img = img * adaptive_brightness
-        
-        # Gamma correction
-        img = np.clip(img, 0, 255)  # Clip before gamma
+        # Convert to HSL for better luminance handling
         img_normalized = img / 255.0
-        img = np.power(img_normalized, gamma) * 255.0
+        max_vals = np.max(img_normalized, axis=2)
+        min_vals = np.min(img_normalized, axis=2)
         
-        # Split channels for color enhancement
-        b, g, r = cv2.split(img.astype(np.uint8))
+        # Calculate lightness
+        lightness = (max_vals + min_vals) / 2
+        delta = max_vals - min_vals
         
-        # Convert to float32 for calculations
-        r = r.astype(np.float32)
-        g = g.astype(np.float32)
-        b = b.astype(np.float32)
+        # Calculate saturation
+        saturation = np.zeros_like(lightness)
+        mask = delta != 0
+        saturation[mask] = delta[mask] / (1 - np.abs(2 * lightness[mask] - 1))
         
-        # Enhanced color correction
-        red_boost = min(30 + (darkness_factor * 20), 50)  # Cap red boost
-        r = r + red_boost
-        g = g * 0.92
-        b = b * 0.88
+        # Enhance lightness while preserving color relationships
+        enhanced_lightness = lightness ** gamma
+        enhanced_lightness = enhanced_lightness * brightness * darkness_factor
         
-        # Temperature adjustment
+        # Adjust contrast on lightness channel
+        enhanced_lightness = (enhanced_lightness - 0.5) * contrast + 0.5
+        enhanced_lightness = np.clip(enhanced_lightness, 0, 1)
+        
+        # Reconstruct color with enhanced lightness
+        for i in range(3):
+            img_normalized[:,:,i] = img_normalized[:,:,i] * (enhanced_lightness / (lightness + 1e-6))
+        
+        # Temperature adjustment with luminance preservation
         if temperature > 1.0:
-            r = r * temperature
-            b = b / temperature
+            # Calculate luminance before temperature adjustment
+            pre_temp_luminance = 0.299 * img_normalized[:,:,0] + 0.587 * img_normalized[:,:,1] + 0.114 * img_normalized[:,:,2]
+            
+            # Apply temperature
+            img_normalized[:,:,0] = img_normalized[:,:,0] * temperature  # Red
+            img_normalized[:,:,2] = img_normalized[:,:,2] / temperature  # Blue
+            
+            # Calculate luminance after temperature adjustment
+            post_temp_luminance = 0.299 * img_normalized[:,:,0] + 0.587 * img_normalized[:,:,1] + 0.114 * img_normalized[:,:,2]
+            
+            # Correct luminance
+            luminance_ratio = pre_temp_luminance / (post_temp_luminance + 1e-6)
+            for i in range(3):
+                img_normalized[:,:,i] = img_normalized[:,:,i] * luminance_ratio
         
-        # Merge channels back
-        img = cv2.merge([b, g, r])
+        # Convert back to 0-255 range
+        img = np.clip(img_normalized * 255.0, 0, 255).astype(np.uint8)
         
-        # Adaptive contrast enhancement
-        adaptive_contrast = min(contrast * (1 + darkness_factor * 0.3), 2.5)  # Cap contrast
-        img = (img - 128) * adaptive_contrast + 128
+        # Enhance local contrast using CLAHE
+        lab = cv2.cvtColor(img, cv2.COLOR_RGB2LAB)
+        l, a, b = cv2.split(lab)
+        clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8,8))
+        l = clahe.apply(l)
+        lab = cv2.merge([l, a, b])
+        img = cv2.cvtColor(lab, cv2.COLOR_LAB2RGB)
         
-        # Additional brightness boost for dark images
-        if avg_brightness < 100:
-            extra_brightness = min((100 - avg_brightness) * 0.3, 30)  # Cap extra brightness
-            img = img + extra_brightness
-            logger.debug(f"Applied extra brightness: {extra_brightness:.2f}")
+        # Calculate final luminance
+        final_luminance = 0.299 * img[:,:,0] + 0.587 * img[:,:,1] + 0.114 * img[:,:,2]
         
-        # Clip values before conversion
-        img = np.clip(img, 0, 255).astype(np.uint8)
+        # Preserve original color relationships while maintaining enhanced luminance
+        luminance_ratio = final_luminance / (initial_luminance + 1e-6)
+        luminance_ratio = np.clip(luminance_ratio, 0.5, 2.0)  # Limit the adjustment range
+        
+        for i in range(3):
+            img[:,:,i] = np.clip(img[:,:,i] * luminance_ratio, 0, 255).astype(np.uint8)
         
         # Convert back to BGR for OpenCV compatibility
         img = cv2.cvtColor(img, cv2.COLOR_RGB2BGR)
         
-        logger.debug("Image enhancement completed successfully")
+        logger.debug("Image enhancement completed successfully with luminance preservation")
         return img
         
     except Exception as e:
