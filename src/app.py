@@ -12,6 +12,8 @@ import colorsys
 from sklearn.cluster import KMeans
 from sklearn.linear_model import LinearRegression
 import json
+from flask import jsonify, request
+import logging
 
 # Configure logging
 logging.basicConfig(level=logging.DEBUG)
@@ -61,6 +63,58 @@ def get_history():
         "chart": chart
     })
 
+logger = logging.getLogger(__name__)
+
+# Updated Nessler reagent color chart with new values
+NESSLER_COLOR_CHART = [
+    {'concentration': 0.0, 'description': 'Clear', 'rgb': (240, 240, 220), 'hex': '#F0F0DC'},
+    {'concentration': 0.5, 'description': 'Very pale yellow', 'rgb': (235, 225, 180), 'hex': '#EBE1B4'},
+    {'concentration': 1.0, 'description': 'Pale yellow', 'rgb': (230, 215, 160), 'hex': '#E6D79F'},
+    {'concentration': 2.0, 'description': 'Yellow', 'rgb': (220, 200, 130), 'hex': '#DCC882'},
+    {'concentration': 3.0, 'description': 'Yellow-orange', 'rgb': (210, 180, 100), 'hex': '#D2B464'},
+    {'concentration': 4.0, 'description': 'Golden-orange', 'rgb': (200, 160, 80), 'hex': '#C8A050'},
+    {'concentration': 5.0, 'description': 'Orange', 'rgb': (185, 140, 60), 'hex': '#B98C3C'},
+    {'concentration': 6.0, 'description': 'Light brown', 'rgb': (170, 120, 50), 'hex': '#AA7832'},
+    {'concentration': 7.0, 'description': 'Brown', 'rgb': (150, 100, 40), 'hex': '#966428'},
+    {'concentration': 8.0, 'description': 'Darker brown', 'rgb': (135, 85, 35), 'hex': '#875523'},
+    {'concentration': 9.0, 'description': 'Deep brown', 'rgb': (120, 70, 30), 'hex': '#78461E'},
+    {'concentration': 10.0, 'description': 'Very deep brown', 'rgb': (105, 60, 25), 'hex': '#693C19'},
+    {'concentration': 11., 'description': 'Almost black-brown', 'rgb': (90, 50, 20), 'hex': '#5A3214'},
+    {'concentration': 12.0, 'description': 'Dark brown-black', 'rgb': (75, 40, 15), 'hex': '#4B280F'},
+    {'concentration': 13.0, 'description': 'Nearly black', 'rgb': (60, 30, 10), 'hex': '#3C1E0A'},
+    {'concentration': 13.4, 'description': 'Max color depth', 'rgb': (50, 25, 8), 'hex': '#321908'}
+]
+
+class NesslerColorChart:
+    def __init__(self):
+        self.df = pd.DataFrame(NESSLER_COLOR_CHART)
+        # Expand RGB tuples into separate columns
+        self.df[['Red', 'Green', 'Blue']] = pd.DataFrame(self.df['rgb'].tolist(), index=self.df.index)
+        
+    def find_closest(self, rgb):
+        """Find the closest color match in the chart using Euclidean distance"""
+        r, g, b = rgb
+        distances = []
+        
+        for _, row in self.df.iterrows():
+            chart_r, chart_g, chart_b = row['Red'], row['Green'], row['Blue']
+            distance = np.sqrt((r - chart_r)**2 + (g - chart_g)**2 + (b - chart_b)**2)
+            distances.append(distance)
+        
+        min_idx = np.argmin(distances)
+        closest_match = self.df.iloc[min_idx]
+        
+        return {
+            'concentration': float(closest_match['concentration']),
+            'hex': str(closest_match['hex']),
+            'rgb': (int(closest_match['Red']), int(closest_match['Green']), int(closest_match['Blue'])),
+            'distance': float(distances[min_idx]),
+            'description': str(closest_match['description'])
+        }
+
+# Initialize the color chart
+color_chart = NesslerColorChart()
+
 def get_center_circle_color(image, circle_radius_percent=0.1):
     """Get the dominant color from the center circle of the image"""
     height, width = image.shape[:2]
@@ -89,91 +143,134 @@ def get_center_circle_color(image, circle_radius_percent=0.1):
     if len(pixels) == 0:
         return None
     
-    # Calculate mean color instead of using K-means
+    # Calculate mean color
     mean_color = np.mean(pixels, axis=0)
     
     # Convert to Python native int type
     return [int(x) for x in mean_color]
 
-def find_concentration_by_primary_color(rgb, color_chart):
-    """Find concentration based on the highest RGB value"""
+def predict_concentration_linear(r):
+    """
+    Predict ammonia concentration using linear regression equation:
+    R = -14.35 * C + 248.78
+    Solving for C: C = (248.78 - R) / 14.35
+    """
+    concentration = (248.78 - r) / 14.35
+    return max(0, min(13.4, concentration))  # Clamp between 0 and 13.4 mg/L
+
+def predict_concentration_quadratic(r):
+    """
+    Predict ammonia concentration using quadratic regression equation:
+    R = -0.265 * C^2 - 10.83 * C + 242.21
+    
+    Using quadratic formula: C = (-b ± √(b² - 4ac)) / 2a
+    where: a = -0.265, b = -10.83, c = (242.21 - R)
+    """
+    a = -0.265
+    b = -10.83
+    c = 242.21 - r
+    
+    discriminant = b**2 - 4*a*c
+    
+    if discriminant < 0:
+        # No real solution, use linear fallback
+        return predict_concentration_linear(r)
+    
+    # Use the positive root (concentration should be positive)
+    c1 = (-b + np.sqrt(discriminant)) / (2*a)
+    c2 = (-b - np.sqrt(discriminant)) / (2*a)
+    
+    # Choose the positive concentration within range
+    concentrations = [c for c in [c1, c2] if 0 <= c <= 13.4]
+    
+    if not concentrations:
+        return predict_concentration_linear(r)
+    
+    return concentrations[0]
+
+def predict_concentration_from_red_channel(rgb, method='quadratic'):
+    """
+    Predict ammonia concentration based on the red channel value
+    
+    Args:
+        rgb: tuple of (r, g, b) values
+        method: 'linear' or 'quadratic' regression method
+    
+    Returns:
+        dict with prediction results
+    """
     r, g, b = rgb
     
-    # Find the primary color (highest value)
-    max_val = max(r, g, b)
-    primary_color = 'r' if r == max_val else 'g' if g == max_val else 'b'
-    
-    # Get all concentrations where the primary color matches
-    chart_df = color_chart.df
-    if primary_color == 'r':
-        matches = chart_df[chart_df['Red'] == max_val]
-    elif primary_color == 'g':
-        matches = chart_df[chart_df['Green'] == max_val]
+    if method == 'quadratic':
+        predicted_concentration = predict_concentration_quadratic(r)
     else:
-        matches = chart_df[chart_df['Blue'] == max_val]
+        predicted_concentration = predict_concentration_linear(r)
     
-    if len(matches) == 0:
-        # If no exact match, find closest
-        return color_chart.find_closest(rgb)
+    # Find closest match in color chart
+    closest_match = color_chart.find_closest(rgb)
     
-    # Get the closest match from the filtered results
-    matches_colors = matches[['Red', 'Green', 'Blue']].values
-    dists = np.linalg.norm(matches_colors - np.array(rgb), axis=1)
-    idx = np.argmin(dists)
+    # Calculate confidence based on how close the red value is to expected
+    expected_r_linear = 248.78 - 14.35 * predicted_concentration
+    expected_r_quadratic = -0.265 * predicted_concentration**2 - 10.83 * predicted_concentration + 242.21
+    
+    if method == 'quadratic':
+        r_error = abs(r - expected_r_quadratic)
+    else:
+        r_error = abs(r - expected_r_linear)
+    
+    # Confidence decreases with larger red channel error
+    confidence = max(0, 100 - (r_error / 2.0))  # Arbitrary scaling
     
     return {
-        'concentration': float(matches.iloc[idx]['Concentration_mg_L']),
-        'hex': str(matches.iloc[idx]['Hex']),
-        'rgb': (int(matches.iloc[idx]['Red']), 
-                int(matches.iloc[idx]['Green']), 
-                int(matches.iloc[idx]['Blue'])),
-        'distance': float(dists[idx])
+        'predicted_concentration': float(predicted_concentration),
+        'chart_match': closest_match,
+        'method': method,
+        'red_channel': r,
+        'expected_red': float(expected_r_quadratic if method == 'quadratic' else expected_r_linear),
+        'red_error': float(r_error),
+        'confidence': float(confidence)
     }
 
-def calculate_luminance_intensity(r, g, b):
-    """Calculate luminance intensity using the standard formula"""
-    return 0.299 * r + 0.587 * g + 0.114 * b
-
-def fit_concentration_model(color_chart):
-    """Fit a linear regression model using the color chart data"""
-    # Get RGB values and concentrations from color chart
-    rgb_values = color_chart.df[['Red', 'Green', 'Blue']].values
-    concentrations = color_chart.df['Concentration_mg_L'].values
+def calculate_color_metrics(r, g, b):
+    """Calculate various color metrics for analysis"""
+    # Luminance intensity
+    luminance = 0.299 * r + 0.587 * g + 0.114 * b
     
-    # Calculate intensities
-    intensities = np.array([calculate_luminance_intensity(r, g, b) for r, g, b in rgb_values])
+    # Yellow-brown ratio (useful for Nessler reagent)
+    yellow_component = (r + g) / 2
+    brown_component = min(r, g, b)
+    yellow_brown_ratio = yellow_component / max(brown_component, 1)
     
-    # Fit linear regression model
-    model = LinearRegression()
-    model.fit(intensities.reshape(-1, 1), concentrations)
+    # Color saturation
+    max_val = max(r, g, b)
+    min_val = min(r, g, b)
+    saturation = (max_val - min_val) / max(max_val, 1) * 100
     
-    return model, intensities
-
-def predict_concentration_from_intensity(r, g, b, color_chart):
-    """Predict concentration using luminance intensity and linear regression"""
-    # Calculate intensity for the input color
-    intensity = calculate_luminance_intensity(r, g, b)
-    
-    # Fit model using color chart data
-    model, chart_intensities = fit_concentration_model(color_chart)
-    
-    # Predict concentration
-    predicted_concentration = model.predict([[intensity]])[0]
-    
-    # Find closest color in chart based on intensity
-    closest_idx = np.argmin(np.abs(chart_intensities - intensity))
-    closest_match = {
-        'concentration': float(color_chart.df.iloc[closest_idx]['Concentration_mg_L']),
-        'hex': str(color_chart.df.iloc[closest_idx]['Hex']),
-        'rgb': (
-            int(color_chart.df.iloc[closest_idx]['Red']),
-            int(color_chart.df.iloc[closest_idx]['Green']),
-            int(color_chart.df.iloc[closest_idx]['Blue'])
-        ),
-        'distance': float(abs(chart_intensities[closest_idx] - intensity))
+    return {
+        'luminance': float(luminance),
+        'yellow_brown_ratio': float(yellow_brown_ratio),
+        'saturation': float(saturation)
     }
+
+def enhance_scanned_document(image):
+    """Enhance the scanned document image for better color detection"""
+    # Convert to LAB color space for better enhancement
+    lab = cv2.cvtColor(image, cv2.COLOR_BGR2LAB)
+    l, a, b = cv2.split(lab)
     
-    return predicted_concentration, closest_match, intensity
+    # Apply CLAHE to L channel
+    clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8,8))
+    l = clahe.apply(l)
+    
+    # Merge channels and convert back to BGR
+    enhanced = cv2.merge([l, a, b])
+    enhanced = cv2.cvtColor(enhanced, cv2.COLOR_LAB2BGR)
+    
+    # Apply slight sharpening
+    kernel = np.array([[-1,-1,-1], [-1,9,-1], [-1,-1,-1]])
+    enhanced = cv2.filter2D(enhanced, -1, kernel)
+    
+    return enhanced
 
 @app.route('/predict', methods=['POST'])
 def predict():
@@ -181,13 +278,10 @@ def predict():
         logger.debug(f"Request received - Content-Type: {request.content_type}")
         logger.debug(f"Files in request: {request.files}")
         logger.debug(f"Form data: {request.form}")
-        logger.debug(f"Request headers: {dict(request.headers)}")
-        logger.debug(f"Content Length: {request.content_length}")
         
-        # Handle file upload
+        # Handle file upload (keeping your existing file handling logic)
         file_bytes = None
         
-        # Check if we have form data
         if 'file' in request.form or 'file' in request.files:
             if 'file' in request.files:
                 file = request.files['file']
@@ -235,15 +329,14 @@ def predict():
             logger.error("No valid file data found in request")
             return jsonify({
                 "error": "No file uploaded",
-                "details": "No valid file data found in the request",
-                "help": "In React Native, use: const imageResponse = await fetch(imageUri); const blob = await imageResponse.blob(); const formData = new FormData(); formData.append('file', blob, 'image.jpg');"
+                "details": "No valid file data found in the request"
             }), 400
 
         # Save the image with timestamp
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         img_dir = os.path.join('data', 'images')
         os.makedirs(img_dir, exist_ok=True)
-        img_filename = f'image_{timestamp}.jpg'
+        img_filename = f'nessler_image_{timestamp}.jpg'
         img_path = os.path.join(img_dir, img_filename)
         
         with open(img_path, 'wb') as f:
@@ -264,7 +357,7 @@ def predict():
                 
             logger.debug(f"Successfully decoded image with shape: {image.shape}")
             
-            # Enhance the image with brightness, contrast, and temperature
+            # Enhance the image
             enhanced_image = enhance_scanned_document(image)
             
             # Save enhanced image and convert to base64
@@ -288,71 +381,81 @@ def predict():
             color_hex = '#{:02x}{:02x}{:02x}'.format(r, g, b)
             logger.debug(f"Detected color: {color_hex} RGB: ({r},{g},{b})")
 
-            # Use new intensity-based prediction method
-            predicted_concentration, match, intensity = predict_concentration_from_intensity(r, g, b, color_chart)
-            logger.debug(f"Predicted concentration: {predicted_concentration:.2f} mg/L (intensity: {intensity:.2f})")
-            logger.debug(f"Matched chart color: {match['hex']} RGB: {match['rgb']} -> {match['concentration']} mg/L (distance: {match['distance']:.2f})")
+            # Predict concentration using both methods
+            linear_result = predict_concentration_from_red_channel((r, g, b), method='linear')
+            quadratic_result = predict_concentration_from_red_channel((r, g, b), method='quadratic')
+            
+            # Use quadratic as primary method (more accurate)
+            primary_result = quadratic_result
+            
+            # Calculate additional color metrics
+            color_metrics = calculate_color_metrics(r, g, b)
+            
+            logger.debug(f"Linear prediction: {linear_result['predicted_concentration']:.2f} mg/L")
+            logger.debug(f"Quadratic prediction: {quadratic_result['predicted_concentration']:.2f} mg/L")
+            logger.debug(f"Chart match: {primary_result['chart_match']['concentration']} mg/L")
 
             # Save to dataset
-            if not os.path.exists(DATASET_PATH):
+            dataset_path = os.path.join('data', 'nessler_dataset.csv')
+            if not os.path.exists(dataset_path):
                 pd.DataFrame(columns=[
-                    'timestamp', 'image_path', 'concentration', 
-                    'color_hex', 'color_r', 'color_g', 'color_b',
-                    'intensity'
-                ]).to_csv(DATASET_PATH, index=False)
+                    'timestamp', 'image_path', 'concentration_linear', 'concentration_quadratic',
+                    'concentration_chart', 'color_hex', 'color_r', 'color_g', 'color_b',
+                    'luminance', 'yellow_brown_ratio', 'saturation', 'confidence'
+                ]).to_csv(dataset_path, index=False)
             
             new_data = pd.DataFrame([{
                 'timestamp': datetime.now().isoformat(),
                 'image_path': img_path,
-                'concentration': predicted_concentration,
+                'concentration_linear': linear_result['predicted_concentration'],
+                'concentration_quadratic': quadratic_result['predicted_concentration'],
+                'concentration_chart': primary_result['chart_match']['concentration'],
                 'color_hex': color_hex,
                 'color_r': r,
                 'color_g': g,
                 'color_b': b,
-                'intensity': intensity
+                'luminance': color_metrics['luminance'],
+                'yellow_brown_ratio': color_metrics['yellow_brown_ratio'],
+                'saturation': color_metrics['saturation'],
+                'confidence': primary_result['confidence']
             }])
-            new_data.to_csv(DATASET_PATH, mode='a', header=False, index=False)
-            
-            history = get_concentration_history()
+            new_data.to_csv(dataset_path, mode='a', header=False, index=False)
             
             return jsonify({
-                "ammonia_concentration": predicted_concentration,
+                "ammonia_concentration": primary_result['predicted_concentration'],
                 "success": True,
                 "saved_image": img_filename,
                 "enhanced_image": enhanced_image_uri,
-                "original_color":  {
-                    "hex": color_hex,
-                    "rgb": {
-                        "r": r,
-                        "g": g,
-                        "b": b
-                    },
-                    "intensity": intensity
+                "detection_results": {
+                    "primary_method": "quadratic",
+                    "linear_prediction": linear_result['predicted_concentration'],
+                    "quadratic_prediction": quadratic_result['predicted_concentration'],
+                    "chart_match": primary_result['chart_match'],
+                    "confidence": primary_result['confidence']
                 },
-                "color": {
-                    "hex": str(match['hex']),
-                    "rgb": {
-                        "r": match['rgb'][0],
-                        "g": match['rgb'][1],
-                        "b": match['rgb'][2]
+                "color_analysis": {
+                    "detected_color": {
+                        "hex": color_hex,
+                        "rgb": {"r": r, "g": g, "b": b}
+                    },
+                    "metrics": color_metrics,
+                    "red_channel_analysis": {
+                        "value": r,
+                        "expected_quadratic": quadratic_result['expected_red'],
+                        "expected_linear": linear_result['expected_red'],
+                        "error": quadratic_result['red_error']
                     }
                 },
-                "distance": match['distance'],
-                "history": history,
-                "chart": [
+                "nessler_chart": [
                     {
-                        'concentration': float(row['Concentration_mg_L']),
-                        'hex': str(row['Hex']),
+                        'concentration': float(row['concentration']),
+                        'description': str(row['description']),
+                        'hex': str(row['hex']),
                         'rgb': {
                             'r': int(row['Red']),
                             'g': int(row['Green']),
                             'b': int(row['Blue'])
-                        },
-                        'intensity': float(calculate_luminance_intensity(
-                            int(row['Red']), 
-                            int(row['Green']), 
-                            int(row['Blue'])
-                        ))
+                        }
                     } for _, row in color_chart.df.iterrows()
                 ]
             })
@@ -364,7 +467,7 @@ def predict():
                 "details": str(e),
                 "type": str(type(e).__name__)
             }), 500
-
+        
     except Exception as e:
         logger.exception("Unexpected error in predict endpoint")
         return jsonify({
