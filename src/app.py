@@ -29,41 +29,83 @@ color_chart = ColorChart()
 app = Flask(__name__)
 CORS(app)
 
-def get_concentration_history():
-    try:
-        if os.path.exists(DATASET_PATH):
-            df = pd.read_csv(DATASET_PATH)
-            return df[['timestamp', 'concentration', 'color_hex']].to_dict('records')
-    except Exception as e:
-        logger.error(f"Error reading concentration history: {str(e)}")
-    return []
+
 
 @app.route("/", methods=["GET"])
 def home():
     return jsonify({"message": "API is running!"}), 200
 
+# Define the dataset path
+DATASET_PATH = os.path.join('data', 'nessler_dataset.csv')
+
+def get_concentration_history():
+    try:
+        if os.path.exists(DATASET_PATH):
+            df = pd.read_csv(DATASET_PATH)
+            # Use the correct column name from your CSV
+            return df[['timestamp', 'concentration_linear', 'color_hex']].rename(
+                columns={'concentration_linear': 'concentration'}
+            ).to_dict('records')
+    except Exception as e:
+        logger.error(f"Error reading concentration history: {str(e)}")
+    return []
+
 @app.route('/history', methods=['GET'])
 def get_history():
     # Get prediction history
     history = get_concentration_history()
-    # Get color chart for display
+    
+    # Create color chart from your CSV data if available
     chart = []
-    for i, row in color_chart.df.iterrows():
-        chart.append({
-            'concentration': float(row['Concentration_mg_L']),
-            'hex': str(row['Hex']),
-            'rgb': {
-                'r': int(row['Red']),
-                'g': int(row['Green']),
-                'b': int(row['Blue'])
-            }
-        })
+    try:
+        if os.path.exists(DATASET_PATH):
+            df = pd.read_csv(DATASET_PATH)
+            # Create chart from existing data
+            for _, row in df.iterrows():
+                chart.append({
+                    'concentration': float(row['concentration_linear']),
+                    'hex': str(row['color_hex']),
+                    'rgb': {
+                        'r': int(row['color_r']),
+                        'g': int(row['color_g']),
+                        'b': int(row['color_b'])
+                    }
+                })
+    except Exception as e:
+        logger.error(f"Error creating color chart: {str(e)}")
+        # Fallback: create a basic chart if your color_chart object exists
+        # Uncomment and modify this section if you have a separate color chart
+        """
+        try:
+            for i, row in color_chart.df.iterrows():
+                chart.append({
+                    'concentration': float(row['Concentration_mg_L']),
+                    'hex': str(row['Hex']),
+                    'rgb': {
+                        'r': int(row['Red']),
+                        'g': int(row['Green']),
+                        'b': int(row['Blue'])
+                    }
+                })
+        except Exception as e2:
+            logger.error(f"Error with color_chart fallback: {str(e2)}")
+        """
+    
     return jsonify({
         "history": history,
         "chart": chart
     })
 
-logger = logging.getLogger(__name__)
+# Alternative version if you want to use both concentration values
+def get_concentration_history_extended():
+    try:
+        if os.path.exists(DATASET_PATH):
+            df = pd.read_csv(DATASET_PATH)
+            # Include both concentration values
+            return df[['timestamp', 'concentration_linear', 'concentration_quadratic', 'color_hex']].to_dict('records')
+    except Exception as e:
+        logger.error(f"Error reading concentration history: {str(e)}")
+    return []
 
 # Updated Nessler reagent color chart with new values
 NESSLER_COLOR_CHART = [
