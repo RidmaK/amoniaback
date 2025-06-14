@@ -107,7 +107,7 @@ def get_concentration_history_extended():
         logger.error(f"Error reading concentration history: {str(e)}")
     return []
 
-# Updated Nessler reagent color chart with new values and calibration points
+# Updated Nessler reagent color chart with fixed values
 NESSLER_COLOR_CHART = [
     {'concentration': 0.0, 'description': 'Clear', 'rgb': (240, 240, 220), 'hex': '#F0F0DC'},
     {'concentration': 0.5, 'description': 'Very pale yellow', 'rgb': (235, 225, 180), 'hex': '#EBE1B4'},
@@ -127,38 +127,23 @@ NESSLER_COLOR_CHART = [
     {'concentration': 13.4, 'description': 'Max color depth', 'rgb': (50, 25, 8), 'hex': '#321908'}
 ]
 
-# Add calibration points for more precise measurements
+# Fixed calibration points for precise measurements
 CALIBRATION_POINTS = [
     {'concentration': 0.0, 'rgb': (240, 240, 220), 'hex': '#F0F0DC'},
-    {'concentration': 0.25, 'rgb': (238, 233, 200), 'hex': '#EEE9C8'},
     {'concentration': 0.5, 'rgb': (235, 225, 180), 'hex': '#EBE1B4'},
-    {'concentration': 0.75, 'rgb': (233, 220, 170), 'hex': '#E9DCAA'},
     {'concentration': 1.0, 'rgb': (230, 215, 160), 'hex': '#E6D79F'},
-    {'concentration': 1.5, 'rgb': (225, 208, 145), 'hex': '#E1D091'},
     {'concentration': 2.0, 'rgb': (220, 200, 130), 'hex': '#DCC882'},
-    {'concentration': 2.5, 'rgb': (215, 190, 115), 'hex': '#D7BE73'},
     {'concentration': 3.0, 'rgb': (210, 180, 100), 'hex': '#D2B464'},
-    {'concentration': 3.5, 'rgb': (205, 170, 90), 'hex': '#CDAA5A'},
     {'concentration': 4.0, 'rgb': (200, 160, 80), 'hex': '#C8A050'},
-    {'concentration': 4.5, 'rgb': (193, 150, 70), 'hex': '#C19646'},
     {'concentration': 5.0, 'rgb': (185, 140, 60), 'hex': '#B98C3C'},
-    {'concentration': 5.5, 'rgb': (178, 130, 55), 'hex': '#B28237'},
     {'concentration': 6.0, 'rgb': (170, 120, 50), 'hex': '#AA7832'},
-    {'concentration': 6.5, 'rgb': (160, 110, 45), 'hex': '#A06E2D'},
     {'concentration': 7.0, 'rgb': (150, 100, 40), 'hex': '#966428'},
-    {'concentration': 7.5, 'rgb': (143, 93, 38), 'hex': '#8F5D26'},
     {'concentration': 8.0, 'rgb': (135, 85, 35), 'hex': '#875523'},
-    {'concentration': 8.5, 'rgb': (128, 78, 33), 'hex': '#804E21'},
     {'concentration': 9.0, 'rgb': (120, 70, 30), 'hex': '#78461E'},
-    {'concentration': 9.5, 'rgb': (113, 65, 28), 'hex': '#71411C'},
     {'concentration': 10.0, 'rgb': (105, 60, 25), 'hex': '#693C19'},
-    {'concentration': 10.5, 'rgb': (98, 55, 23), 'hex': '#623717'},
     {'concentration': 11.0, 'rgb': (90, 50, 20), 'hex': '#5A3214'},
-    {'concentration': 11.5, 'rgb': (83, 45, 18), 'hex': '#532D12'},
     {'concentration': 12.0, 'rgb': (75, 40, 15), 'hex': '#4B280F'},
-    {'concentration': 12.5, 'rgb': (68, 35, 13), 'hex': '#44230D'},
     {'concentration': 13.0, 'rgb': (60, 30, 10), 'hex': '#3C1E0A'},
-    {'concentration': 13.2, 'rgb': (55, 28, 9), 'hex': '#371C09'},
     {'concentration': 13.4, 'rgb': (50, 25, 8), 'hex': '#321908'}
 ]
 
