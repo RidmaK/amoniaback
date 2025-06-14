@@ -486,26 +486,24 @@ def predict():
                 "success": True,
                 "saved_image": img_filename,
                 "enhanced_image": enhanced_image_uri,
-                "detection_results": {
-                    "primary_method": "quadratic",
-                    "linear_prediction": linear_result['predicted_concentration'],
-                    "quadratic_prediction": quadratic_result['predicted_concentration'],
-                    "chart_match": primary_result['chart_match'],
-                    "confidence": primary_result['confidence']
-                },
-                "color_analysis": {
-                    "detected_color": {
-                        "hex": color_hex,
-                        "rgb": {"r": r, "g": g, "b": b}
-                    },
-                    "metrics": color_metrics,
-                    "red_channel_analysis": {
-                        "value": r,
-                        "expected_quadratic": quadratic_result['expected_red'],
-                        "expected_linear": linear_result['expected_red'],
-                        "error": quadratic_result['red_error']
+                "original_color":  {
+                    "hex": color_hex,
+                    "rgb": {
+                        "r": r,
+                        "g": g,
+                        "b": b
                     }
                 },
+                "color": {
+                    "hex": str(primary_result['chart_match']['hex']),
+                    "rgb": {
+                        "r": primary_result['chart_match']['rgb'][0],
+                        "g": primary_result['chart_match']['rgb'][1],
+                        "b": primary_result['chart_match']['rgb'][2]
+                    }
+                },
+                "distance": primary_result['chart_match']['distance'],
+                "history": get_concentration_history(),
                 "chart": calibration_data
             })
             
