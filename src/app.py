@@ -10,7 +10,10 @@ import pandas as pd
 from color_chart_utils import ColorChart
 import colorsys
 from sklearn.cluster import KMeans
+from sklearn.linear_model import LinearRegression
 import json
+from flask import jsonify, request
+import logging
 
 # Configure logging
 logging.basicConfig(level=logging.DEBUG)
@@ -26,39 +29,133 @@ color_chart = ColorChart()
 app = Flask(__name__)
 CORS(app)
 
-def get_concentration_history():
-    try:
-        if os.path.exists(DATASET_PATH):
-            df = pd.read_csv(DATASET_PATH)
-            return df[['timestamp', 'concentration', 'color_hex']].to_dict('records')
-    except Exception as e:
-        logger.error(f"Error reading concentration history: {str(e)}")
-    return []
+
 
 @app.route("/", methods=["GET"])
 def home():
     return jsonify({"message": "API is running!"}), 200
 
+# Define the dataset path
+DATASET_PATH = os.path.join('data', 'nessler_dataset.csv')
+
+def get_concentration_history():
+    try:
+        if os.path.exists(DATASET_PATH):
+            df = pd.read_csv(DATASET_PATH)
+            # Use the correct column name from your CSV
+            return df[['timestamp', 'concentration_linear', 'color_hex']].rename(
+                columns={'concentration_linear': 'concentration'}
+            ).to_dict('records')
+    except Exception as e:
+        logger.error(f"Error reading concentration history: {str(e)}")
+    return []
+
 @app.route('/history', methods=['GET'])
 def get_history():
     # Get prediction history
     history = get_concentration_history()
-    # Get color chart for display
+    
+    # Create color chart from your CSV data if available
     chart = []
-    for i, row in color_chart.df.iterrows():
-        chart.append({
-            'concentration': float(row['Concentration_mg_L']),
-            'hex': str(row['Hex']),
-            'rgb': {
-                'r': int(row['Red']),
-                'g': int(row['Green']),
-                'b': int(row['Blue'])
-            }
-        })
+    try:
+        if os.path.exists(DATASET_PATH):
+            df = pd.read_csv(DATASET_PATH)
+            # Create chart from existing data
+            for _, row in df.iterrows():
+                chart.append({
+                    'concentration': float(row['concentration_linear']),
+                    'hex': str(row['color_hex']),
+                    'rgb': {
+                        'r': int(row['color_r']),
+                        'g': int(row['color_g']),
+                        'b': int(row['color_b'])
+                    }
+                })
+    except Exception as e:
+        logger.error(f"Error creating color chart: {str(e)}")
+        # Fallback: create a basic chart if your color_chart object exists
+        # Uncomment and modify this section if you have a separate color chart
+        """
+        try:
+            for i, row in color_chart.df.iterrows():
+                chart.append({
+                    'concentration': float(row['Concentration_mg_L']),
+                    'hex': str(row['Hex']),
+                    'rgb': {
+                        'r': int(row['Red']),
+                        'g': int(row['Green']),
+                        'b': int(row['Blue'])
+                    }
+                })
+        except Exception as e2:
+            logger.error(f"Error with color_chart fallback: {str(e2)}")
+        """
+    
     return jsonify({
         "history": history,
         "chart": chart
     })
+
+# Alternative version if you want to use both concentration values
+def get_concentration_history_extended():
+    try:
+        if os.path.exists(DATASET_PATH):
+            df = pd.read_csv(DATASET_PATH)
+            # Include both concentration values
+            return df[['timestamp', 'concentration_linear', 'concentration_quadratic', 'color_hex']].to_dict('records')
+    except Exception as e:
+        logger.error(f"Error reading concentration history: {str(e)}")
+    return []
+
+# Updated Nessler reagent color chart with new values
+NESSLER_COLOR_CHART = [
+    {'concentration': 0.0, 'description': 'Clear', 'rgb': (240, 240, 220), 'hex': '#F0F0DC'},
+    {'concentration': 0.5, 'description': 'Very pale yellow', 'rgb': (235, 225, 180), 'hex': '#EBE1B4'},
+    {'concentration': 1.0, 'description': 'Pale yellow', 'rgb': (230, 215, 160), 'hex': '#E6D79F'},
+    {'concentration': 2.0, 'description': 'Yellow', 'rgb': (220, 200, 130), 'hex': '#DCC882'},
+    {'concentration': 3.0, 'description': 'Yellow-orange', 'rgb': (210, 180, 100), 'hex': '#D2B464'},
+    {'concentration': 4.0, 'description': 'Golden-orange', 'rgb': (200, 160, 80), 'hex': '#C8A050'},
+    {'concentration': 5.0, 'description': 'Orange', 'rgb': (185, 140, 60), 'hex': '#B98C3C'},
+    {'concentration': 6.0, 'description': 'Light brown', 'rgb': (170, 120, 50), 'hex': '#AA7832'},
+    {'concentration': 7.0, 'description': 'Brown', 'rgb': (150, 100, 40), 'hex': '#966428'},
+    {'concentration': 8.0, 'description': 'Darker brown', 'rgb': (135, 85, 35), 'hex': '#875523'},
+    {'concentration': 9.0, 'description': 'Deep brown', 'rgb': (120, 70, 30), 'hex': '#78461E'},
+    {'concentration': 10.0, 'description': 'Very deep brown', 'rgb': (105, 60, 25), 'hex': '#693C19'},
+    {'concentration': 11., 'description': 'Almost black-brown', 'rgb': (90, 50, 20), 'hex': '#5A3214'},
+    {'concentration': 12.0, 'description': 'Dark brown-black', 'rgb': (75, 40, 15), 'hex': '#4B280F'},
+    {'concentration': 13.0, 'description': 'Nearly black', 'rgb': (60, 30, 10), 'hex': '#3C1E0A'},
+    {'concentration': 13.4, 'description': 'Max color depth', 'rgb': (50, 25, 8), 'hex': '#321908'}
+]
+
+class NesslerColorChart:
+    def __init__(self):
+        self.df = pd.DataFrame(NESSLER_COLOR_CHART)
+        # Expand RGB tuples into separate columns
+        self.df[['Red', 'Green', 'Blue']] = pd.DataFrame(self.df['rgb'].tolist(), index=self.df.index)
+        
+    def find_closest(self, rgb):
+        """Find the closest color match in the chart using Euclidean distance"""
+        r, g, b = rgb
+        distances = []
+        
+        for _, row in self.df.iterrows():
+            chart_r, chart_g, chart_b = row['Red'], row['Green'], row['Blue']
+            distance = np.sqrt((r - chart_r)**2 + (g - chart_g)**2 + (b - chart_b)**2)
+            distances.append(distance)
+        
+        min_idx = np.argmin(distances)
+        closest_match = self.df.iloc[min_idx]
+        
+        return {
+            'concentration': float(closest_match['concentration']),
+            'hex': str(closest_match['hex']),
+            'rgb': (int(closest_match['Red']), int(closest_match['Green']), int(closest_match['Blue'])),
+            'distance': float(distances[min_idx]),
+            'description': str(closest_match['description'])
+        }
+
+# Initialize the color chart
+color_chart = NesslerColorChart()
 
 def get_center_circle_color(image, circle_radius_percent=0.1):
     """Get the dominant color from the center circle of the image"""
@@ -88,53 +185,134 @@ def get_center_circle_color(image, circle_radius_percent=0.1):
     if len(pixels) == 0:
         return None
     
-    # Perform K-means clustering
-    kmeans = KMeans(n_clusters=3, random_state=42)
-    kmeans.fit(pixels)
-    
-    # Get the dominant color (cluster with most points)
-    colors = kmeans.cluster_centers_
-    labels = kmeans.labels_
-    counts = np.bincount(labels)
-    dominant_color = colors[counts.argmax()]
+    # Calculate mean color
+    mean_color = np.mean(pixels, axis=0)
     
     # Convert to Python native int type
-    return [int(x) for x in dominant_color]
+    return [int(x) for x in mean_color]
 
-def find_concentration_by_primary_color(rgb, color_chart):
-    """Find concentration based on the highest RGB value"""
+def predict_concentration_linear(r):
+    """
+    Predict ammonia concentration using linear regression equation:
+    R = -14.35 * C + 248.78
+    Solving for C: C = (248.78 - R) / 14.35
+    """
+    concentration = (248.78 - r) / 14.35
+    return max(0, min(13.4, concentration))  # Clamp between 0 and 13.4 mg/L
+
+def predict_concentration_quadratic(r):
+    """
+    Predict ammonia concentration using quadratic regression equation:
+    R = -0.265 * C^2 - 10.83 * C + 242.21
+    
+    Using quadratic formula: C = (-b ± √(b² - 4ac)) / 2a
+    where: a = -0.265, b = -10.83, c = (242.21 - R)
+    """
+    a = -0.265
+    b = -10.83
+    c = 242.21 - r
+    
+    discriminant = b**2 - 4*a*c
+    
+    if discriminant < 0:
+        # No real solution, use linear fallback
+        return predict_concentration_linear(r)
+    
+    # Use the positive root (concentration should be positive)
+    c1 = (-b + np.sqrt(discriminant)) / (2*a)
+    c2 = (-b - np.sqrt(discriminant)) / (2*a)
+    
+    # Choose the positive concentration within range
+    concentrations = [c for c in [c1, c2] if 0 <= c <= 13.4]
+    
+    if not concentrations:
+        return predict_concentration_linear(r)
+    
+    return concentrations[0]
+
+def predict_concentration_from_red_channel(rgb, method='quadratic'):
+    """
+    Predict ammonia concentration based on the red channel value
+    
+    Args:
+        rgb: tuple of (r, g, b) values
+        method: 'linear' or 'quadratic' regression method
+    
+    Returns:
+        dict with prediction results
+    """
     r, g, b = rgb
     
-    # Find the primary color (highest value)
-    max_val = max(r, g, b)
-    primary_color = 'r' if r == max_val else 'g' if g == max_val else 'b'
-    
-    # Get all concentrations where the primary color matches
-    chart_df = color_chart.df
-    if primary_color == 'r':
-        matches = chart_df[chart_df['Red'] == max_val]
-    elif primary_color == 'g':
-        matches = chart_df[chart_df['Green'] == max_val]
+    if method == 'quadratic':
+        predicted_concentration = predict_concentration_quadratic(r)
     else:
-        matches = chart_df[chart_df['Blue'] == max_val]
+        predicted_concentration = predict_concentration_linear(r)
     
-    if len(matches) == 0:
-        # If no exact match, find closest
-        return color_chart.find_closest(rgb)
+    # Find closest match in color chart
+    closest_match = color_chart.find_closest(rgb)
     
-    # Get the closest match from the filtered results
-    matches_colors = matches[['Red', 'Green', 'Blue']].values
-    dists = np.linalg.norm(matches_colors - np.array(rgb), axis=1)
-    idx = np.argmin(dists)
+    # Calculate confidence based on how close the red value is to expected
+    expected_r_linear = 248.78 - 14.35 * predicted_concentration
+    expected_r_quadratic = -0.265 * predicted_concentration**2 - 10.83 * predicted_concentration + 242.21
+    
+    if method == 'quadratic':
+        r_error = abs(r - expected_r_quadratic)
+    else:
+        r_error = abs(r - expected_r_linear)
+    
+    # Confidence decreases with larger red channel error
+    confidence = max(0, 100 - (r_error / 2.0))  # Arbitrary scaling
     
     return {
-        'concentration': float(matches.iloc[idx]['Concentration_mg_L']),
-        'hex': str(matches.iloc[idx]['Hex']),
-        'rgb': (int(matches.iloc[idx]['Red']), 
-                int(matches.iloc[idx]['Green']), 
-                int(matches.iloc[idx]['Blue'])),
-        'distance': float(dists[idx])
+        'predicted_concentration': float(predicted_concentration),
+        'chart_match': closest_match,
+        'method': method,
+        'red_channel': r,
+        'expected_red': float(expected_r_quadratic if method == 'quadratic' else expected_r_linear),
+        'red_error': float(r_error),
+        'confidence': float(confidence)
     }
+
+def calculate_color_metrics(r, g, b):
+    """Calculate various color metrics for analysis"""
+    # Luminance intensity
+    luminance = 0.299 * r + 0.587 * g + 0.114 * b
+    
+    # Yellow-brown ratio (useful for Nessler reagent)
+    yellow_component = (r + g) / 2
+    brown_component = min(r, g, b)
+    yellow_brown_ratio = yellow_component / max(brown_component, 1)
+    
+    # Color saturation
+    max_val = max(r, g, b)
+    min_val = min(r, g, b)
+    saturation = (max_val - min_val) / max(max_val, 1) * 100
+    
+    return {
+        'luminance': float(luminance),
+        'yellow_brown_ratio': float(yellow_brown_ratio),
+        'saturation': float(saturation)
+    }
+
+def enhance_scanned_document(image):
+    """Enhance the scanned document image for better color detection"""
+    # Convert to LAB color space for better enhancement
+    lab = cv2.cvtColor(image, cv2.COLOR_BGR2LAB)
+    l, a, b = cv2.split(lab)
+    
+    # Apply CLAHE to L channel
+    clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8,8))
+    l = clahe.apply(l)
+    
+    # Merge channels and convert back to BGR
+    enhanced = cv2.merge([l, a, b])
+    enhanced = cv2.cvtColor(enhanced, cv2.COLOR_LAB2BGR)
+    
+    # Apply slight sharpening
+    kernel = np.array([[-1,-1,-1], [-1,9,-1], [-1,-1,-1]])
+    enhanced = cv2.filter2D(enhanced, -1, kernel)
+    
+    return enhanced
 
 @app.route('/predict', methods=['POST'])
 def predict():
@@ -142,13 +320,10 @@ def predict():
         logger.debug(f"Request received - Content-Type: {request.content_type}")
         logger.debug(f"Files in request: {request.files}")
         logger.debug(f"Form data: {request.form}")
-        logger.debug(f"Request headers: {dict(request.headers)}")
-        logger.debug(f"Content Length: {request.content_length}")
         
-        # Handle file upload
+        # Handle file upload (keeping your existing file handling logic)
         file_bytes = None
         
-        # Check if we have form data
         if 'file' in request.form or 'file' in request.files:
             if 'file' in request.files:
                 file = request.files['file']
@@ -196,15 +371,14 @@ def predict():
             logger.error("No valid file data found in request")
             return jsonify({
                 "error": "No file uploaded",
-                "details": "No valid file data found in the request",
-                "help": "In React Native, use: const imageResponse = await fetch(imageUri); const blob = await imageResponse.blob(); const formData = new FormData(); formData.append('file', blob, 'image.jpg');"
+                "details": "No valid file data found in the request"
             }), 400
 
         # Save the image with timestamp
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         img_dir = os.path.join('data', 'images')
         os.makedirs(img_dir, exist_ok=True)
-        img_filename = f'image_{timestamp}.jpg'
+        img_filename = f'nessler_image_{timestamp}.jpg'
         img_path = os.path.join(img_dir, img_filename)
         
         with open(img_path, 'wb') as f:
@@ -225,8 +399,19 @@ def predict():
                 
             logger.debug(f"Successfully decoded image with shape: {image.shape}")
             
-            # Get color from center circle
-            dominant_color = get_center_circle_color(image)
+            # Enhance the image
+            enhanced_image = enhance_scanned_document(image)
+            
+            # Save enhanced image and convert to base64
+            success, buffer = cv2.imencode('.jpg', enhanced_image, [int(cv2.IMWRITE_JPEG_QUALITY), 90])
+            if not success:
+                raise Exception("Failed to encode enhanced image")
+            
+            enhanced_base64 = base64.b64encode(buffer).decode('utf-8')
+            enhanced_image_uri = f"data:image/jpeg;base64,{enhanced_base64}"
+            
+            # Get color from center circle using the enhanced image
+            dominant_color = get_center_circle_color(enhanced_image)
             if dominant_color is None:
                 return jsonify({
                     "error": "Invalid sample",
@@ -238,61 +423,76 @@ def predict():
             color_hex = '#{:02x}{:02x}{:02x}'.format(r, g, b)
             logger.debug(f"Detected color: {color_hex} RGB: ({r},{g},{b})")
 
-            # Find concentration based on primary color
-            match = find_concentration_by_primary_color((r, g, b), color_chart)
-            logger.debug(f"Matched chart color: {match['hex']} RGB: {match['rgb']} -> {match['concentration']} mg/L (distance: {match['distance']:.2f})")
-
-            # Convert match values to Python native types
-            match_rgb = [int(x) for x in match['rgb']]
-            match_distance = float(match['distance'])
-            match_concentration = float(match['concentration'])
+            # Predict concentration using both methods
+            linear_result = predict_concentration_from_red_channel((r, g, b), method='linear')
+            quadratic_result = predict_concentration_from_red_channel((r, g, b), method='quadratic')
+            
+            # Use quadratic as primary method (more accurate)
+            primary_result = quadratic_result
+            
+            # Calculate additional color metrics
+            color_metrics = calculate_color_metrics(r, g, b)
+            
+            logger.debug(f"Linear prediction: {linear_result['predicted_concentration']:.2f} mg/L")
+            logger.debug(f"Quadratic prediction: {quadratic_result['predicted_concentration']:.2f} mg/L")
+            logger.debug(f"Chart match: {primary_result['chart_match']['concentration']} mg/L")
 
             # Save to dataset
-            if not os.path.exists(DATASET_PATH):
+            dataset_path = os.path.join('data', 'nessler_dataset.csv')
+            if not os.path.exists(dataset_path):
                 pd.DataFrame(columns=[
-                    'timestamp', 'image_path', 'concentration', 
-                    'color_hex', 'color_r', 'color_g', 'color_b'
-                ]).to_csv(DATASET_PATH, index=False)
+                    'timestamp', 'image_path', 'concentration_linear', 'concentration_quadratic',
+                    'concentration_chart', 'color_hex', 'color_r', 'color_g', 'color_b',
+                    'luminance', 'yellow_brown_ratio', 'saturation', 'confidence'
+                ]).to_csv(dataset_path, index=False)
             
             new_data = pd.DataFrame([{
                 'timestamp': datetime.now().isoformat(),
                 'image_path': img_path,
-                'concentration': match_concentration,
-                'color_hex': match['hex'],
+                'concentration_linear': linear_result['predicted_concentration'],
+                'concentration_quadratic': quadratic_result['predicted_concentration'],
+                'concentration_chart': primary_result['chart_match']['concentration'],
+                'color_hex': color_hex,
                 'color_r': r,
                 'color_g': g,
-                'color_b': b
+                'color_b': b,
+                'luminance': color_metrics['luminance'],
+                'yellow_brown_ratio': color_metrics['yellow_brown_ratio'],
+                'saturation': color_metrics['saturation'],
+                'confidence': primary_result['confidence']
             }])
-            new_data.to_csv(DATASET_PATH, mode='a', header=False, index=False)
-            
-            history = get_concentration_history()
+            new_data.to_csv(dataset_path, mode='a', header=False, index=False)
             
             return jsonify({
-                "ammonia_concentration": match_concentration,
+                "ammonia_concentration": primary_result['predicted_concentration'],
                 "success": True,
                 "saved_image": img_filename,
-                "original_color":  {
-                    "hex": color_hex,
-                    "rgb": {
-                        "r": r,
-                        "g": g,
-                        "b": b
+                "enhanced_image": enhanced_image_uri,
+                "detection_results": {
+                    "primary_method": "quadratic",
+                    "linear_prediction": linear_result['predicted_concentration'],
+                    "quadratic_prediction": quadratic_result['predicted_concentration'],
+                    "chart_match": primary_result['chart_match'],
+                    "confidence": primary_result['confidence']
+                },
+                "color_analysis": {
+                    "detected_color": {
+                        "hex": color_hex,
+                        "rgb": {"r": r, "g": g, "b": b}
+                    },
+                    "metrics": color_metrics,
+                    "red_channel_analysis": {
+                        "value": r,
+                        "expected_quadratic": quadratic_result['expected_red'],
+                        "expected_linear": linear_result['expected_red'],
+                        "error": quadratic_result['red_error']
                     }
                 },
-                "color": {
-                    "hex": str(match['hex']),
-                    "rgb": {
-                        "r": match_rgb[0],
-                        "g": match_rgb[1],
-                        "b": match_rgb[2]
-                    }
-                },
-                "distance": match_distance,
-                "history": history,
-                "chart": [
+                "nessler_chart": [
                     {
-                        'concentration': float(row['Concentration_mg_L']),
-                        'hex': str(row['Hex']),
+                        'concentration': float(row['concentration']),
+                        'description': str(row['description']),
+                        'hex': str(row['hex']),
                         'rgb': {
                             'r': int(row['Red']),
                             'g': int(row['Green']),
@@ -309,7 +509,7 @@ def predict():
                 "details": str(e),
                 "type": str(type(e).__name__)
             }), 500
-
+        
     except Exception as e:
         logger.exception("Unexpected error in predict endpoint")
         return jsonify({
@@ -489,34 +689,60 @@ def validate_color():
             "details": str(e)
         }), 500
 
-def enhance_scanned_document(image, brightness=1.2, contrast=1.3):
+def enhance_scanned_document(image, brightness=1.2, contrast=1.3, temperature=1.1, gamma=0.9):
     """
-    Simple brightness and contrast adjustment
+    Enhanced image processing with minimal color distortion and center area preservation
     """
     try:
-        # Convert BGR to RGB since we're working with web output
-        img = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+        # Get image dimensions for center area preservation
+        height, width = image.shape[:2]
+        center_x, center_y = width // 2, height // 2
+        radius = int(min(width, height) * 0.1)  # 10% of image size
         
-        # Convert to float32 for calculations
+        # Create a mask for the center circle
+        y, x = np.ogrid[:height, :width]
+        dist_from_center = np.sqrt((x - center_x)**2 + (y - center_y)**2)
+        center_mask = dist_from_center <= radius
+        
+        # Store original center area
+        original_center = image[center_mask].copy()
+        
+        # Convert BGR to RGB for processing
+        img = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
         img = img.astype(np.float32)
         
-        # Apply brightness
+        # More conservative enhancement
+        # Adjust brightness
         img = img * brightness
         
-        # Apply contrast
+        # Adjust contrast
         img = (img - 128) * contrast + 128
         
-        # Clip values to valid range
+        # Gamma correction
+        img = np.clip(img, 0, 255)
+        img_normalized = img / 255.0
+        img = np.power(img_normalized, gamma) * 255.0
+        
+        # Temperature adjustment (more subtle)
+        if temperature > 1.0:
+            img[:,:,0] = img[:,:,0] * temperature  # Red
+            img[:,:,2] = img[:,:,2] / temperature  # Blue
+        
+        # Clip values
         img = np.clip(img, 0, 255).astype(np.uint8)
         
-        # Convert back to BGR for OpenCV encoding
-        img = cv2.cvtColor(img, cv2.COLOR_RGB2BGR)
+        # Convert back to BGR
+        enhanced = cv2.cvtColor(img, cv2.COLOR_RGB2BGR)
         
-        return img
-
+        # Restore the original center area
+        enhanced[center_mask] = original_center
+        
+        logger.debug("Image enhancement completed with center area preservation")
+        return enhanced
+        
     except Exception as e:
         logger.error(f"Error in enhance_scanned_document: {str(e)}")
-        raise
+        return image  # Return original image if enhancement fails
 
 def auto_enhance_document(image):
     """
@@ -526,8 +752,9 @@ def auto_enhance_document(image):
         # Use default values that match the React Native code
         brightness = 1.2
         contrast = 1.3
+        temperature = 1.1  # Slightly warmer by default
         
-        return enhance_scanned_document(image, brightness, contrast)
+        return enhance_scanned_document(image, brightness, contrast, temperature)
         
     except Exception as e:
         logger.error(f"Error in auto_enhance_document: {str(e)}")
@@ -541,6 +768,7 @@ def process_image():
         # Get enhancement parameters
         brightness = float(request.form.get('brightness', 1.2))
         contrast = float(request.form.get('contrast', 1.3))
+        temperature = float(request.form.get('temperature', 1.1))
         
         # Handle file upload
         file_bytes = None
@@ -591,8 +819,8 @@ def process_image():
         logger.debug(f"Image decoded successfully: {image.shape}")
 
         # Apply enhancement
-        enhanced_image = enhance_scanned_document(image, brightness, contrast)
-        logger.debug(f"Applied enhancement - brightness: {brightness}, contrast: {contrast}")
+        enhanced_image = enhance_scanned_document(image, brightness, contrast, temperature)
+        logger.debug(f"Applied enhancement - brightness: {brightness}, contrast: {contrast}, temperature: {temperature}")
 
         # Encode to JPEG with quality matching React Native (0.9 = 90%)
         try:
@@ -628,7 +856,8 @@ def process_image():
             "imageUri": f"data:image/jpeg;base64,{image_base64}",
             "processingInfo": {
                 "brightness": brightness,
-                "contrast": contrast
+                "contrast": contrast,
+                "temperature": temperature
             }
         })
 
