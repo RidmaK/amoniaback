@@ -107,7 +107,7 @@ def get_concentration_history_extended():
         logger.error(f"Error reading concentration history: {str(e)}")
     return []
 
-# Updated Nessler reagent color chart with new values
+# Updated Nessler reagent color chart with new values and calibration points
 NESSLER_COLOR_CHART = [
     {'concentration': 0.0, 'description': 'Clear', 'rgb': (240, 240, 220), 'hex': '#F0F0DC'},
     {'concentration': 0.5, 'description': 'Very pale yellow', 'rgb': (235, 225, 180), 'hex': '#EBE1B4'},
@@ -121,17 +121,54 @@ NESSLER_COLOR_CHART = [
     {'concentration': 8.0, 'description': 'Darker brown', 'rgb': (135, 85, 35), 'hex': '#875523'},
     {'concentration': 9.0, 'description': 'Deep brown', 'rgb': (120, 70, 30), 'hex': '#78461E'},
     {'concentration': 10.0, 'description': 'Very deep brown', 'rgb': (105, 60, 25), 'hex': '#693C19'},
-    {'concentration': 11., 'description': 'Almost black-brown', 'rgb': (90, 50, 20), 'hex': '#5A3214'},
+    {'concentration': 11.0, 'description': 'Almost black-brown', 'rgb': (90, 50, 20), 'hex': '#5A3214'},
     {'concentration': 12.0, 'description': 'Dark brown-black', 'rgb': (75, 40, 15), 'hex': '#4B280F'},
     {'concentration': 13.0, 'description': 'Nearly black', 'rgb': (60, 30, 10), 'hex': '#3C1E0A'},
     {'concentration': 13.4, 'description': 'Max color depth', 'rgb': (50, 25, 8), 'hex': '#321908'}
 ]
 
+# Add calibration points for more precise measurements
+CALIBRATION_POINTS = [
+    {'concentration': 0.0, 'rgb': (240, 240, 220), 'hex': '#F0F0DC'},
+    {'concentration': 0.25, 'rgb': (238, 233, 200), 'hex': '#EEE9C8'},
+    {'concentration': 0.5, 'rgb': (235, 225, 180), 'hex': '#EBE1B4'},
+    {'concentration': 0.75, 'rgb': (233, 220, 170), 'hex': '#E9DCAA'},
+    {'concentration': 1.0, 'rgb': (230, 215, 160), 'hex': '#E6D79F'},
+    {'concentration': 1.5, 'rgb': (225, 208, 145), 'hex': '#E1D091'},
+    {'concentration': 2.0, 'rgb': (220, 200, 130), 'hex': '#DCC882'},
+    {'concentration': 2.5, 'rgb': (215, 190, 115), 'hex': '#D7BE73'},
+    {'concentration': 3.0, 'rgb': (210, 180, 100), 'hex': '#D2B464'},
+    {'concentration': 3.5, 'rgb': (205, 170, 90), 'hex': '#CDAA5A'},
+    {'concentration': 4.0, 'rgb': (200, 160, 80), 'hex': '#C8A050'},
+    {'concentration': 4.5, 'rgb': (193, 150, 70), 'hex': '#C19646'},
+    {'concentration': 5.0, 'rgb': (185, 140, 60), 'hex': '#B98C3C'},
+    {'concentration': 5.5, 'rgb': (178, 130, 55), 'hex': '#B28237'},
+    {'concentration': 6.0, 'rgb': (170, 120, 50), 'hex': '#AA7832'},
+    {'concentration': 6.5, 'rgb': (160, 110, 45), 'hex': '#A06E2D'},
+    {'concentration': 7.0, 'rgb': (150, 100, 40), 'hex': '#966428'},
+    {'concentration': 7.5, 'rgb': (143, 93, 38), 'hex': '#8F5D26'},
+    {'concentration': 8.0, 'rgb': (135, 85, 35), 'hex': '#875523'},
+    {'concentration': 8.5, 'rgb': (128, 78, 33), 'hex': '#804E21'},
+    {'concentration': 9.0, 'rgb': (120, 70, 30), 'hex': '#78461E'},
+    {'concentration': 9.5, 'rgb': (113, 65, 28), 'hex': '#71411C'},
+    {'concentration': 10.0, 'rgb': (105, 60, 25), 'hex': '#693C19'},
+    {'concentration': 10.5, 'rgb': (98, 55, 23), 'hex': '#623717'},
+    {'concentration': 11.0, 'rgb': (90, 50, 20), 'hex': '#5A3214'},
+    {'concentration': 11.5, 'rgb': (83, 45, 18), 'hex': '#532D12'},
+    {'concentration': 12.0, 'rgb': (75, 40, 15), 'hex': '#4B280F'},
+    {'concentration': 12.5, 'rgb': (68, 35, 13), 'hex': '#44230D'},
+    {'concentration': 13.0, 'rgb': (60, 30, 10), 'hex': '#3C1E0A'},
+    {'concentration': 13.2, 'rgb': (55, 28, 9), 'hex': '#371C09'},
+    {'concentration': 13.4, 'rgb': (50, 25, 8), 'hex': '#321908'}
+]
+
 class NesslerColorChart:
     def __init__(self):
         self.df = pd.DataFrame(NESSLER_COLOR_CHART)
+        self.calibration_df = pd.DataFrame(CALIBRATION_POINTS)
         # Expand RGB tuples into separate columns
         self.df[['Red', 'Green', 'Blue']] = pd.DataFrame(self.df['rgb'].tolist(), index=self.df.index)
+        self.calibration_df[['Red', 'Green', 'Blue']] = pd.DataFrame(self.calibration_df['rgb'].tolist(), index=self.calibration_df.index)
         
     def find_closest(self, rgb):
         """Find the closest color match in the chart using Euclidean distance"""
@@ -153,6 +190,10 @@ class NesslerColorChart:
             'distance': float(distances[min_idx]),
             'description': str(closest_match['description'])
         }
+    
+    def get_calibration_data(self):
+        """Get calibration data for chart visualization"""
+        return self.calibration_df.to_dict('records')
 
 # Initialize the color chart
 color_chart = NesslerColorChart()
@@ -437,32 +478,9 @@ def predict():
             logger.debug(f"Quadratic prediction: {quadratic_result['predicted_concentration']:.2f} mg/L")
             logger.debug(f"Chart match: {primary_result['chart_match']['concentration']} mg/L")
 
-            # Save to dataset
-            dataset_path = os.path.join('data', 'nessler_dataset.csv')
-            if not os.path.exists(dataset_path):
-                pd.DataFrame(columns=[
-                    'timestamp', 'image_path', 'concentration_linear', 'concentration_quadratic',
-                    'concentration_chart', 'color_hex', 'color_r', 'color_g', 'color_b',
-                    'luminance', 'yellow_brown_ratio', 'saturation', 'confidence'
-                ]).to_csv(dataset_path, index=False)
-            
-            new_data = pd.DataFrame([{
-                'timestamp': datetime.now().isoformat(),
-                'image_path': img_path,
-                'concentration_linear': linear_result['predicted_concentration'],
-                'concentration_quadratic': quadratic_result['predicted_concentration'],
-                'concentration_chart': primary_result['chart_match']['concentration'],
-                'color_hex': color_hex,
-                'color_r': r,
-                'color_g': g,
-                'color_b': b,
-                'luminance': color_metrics['luminance'],
-                'yellow_brown_ratio': color_metrics['yellow_brown_ratio'],
-                'saturation': color_metrics['saturation'],
-                'confidence': primary_result['confidence']
-            }])
-            new_data.to_csv(dataset_path, mode='a', header=False, index=False)
-            
+            # Get calibration data for chart
+            calibration_data = color_chart.get_calibration_data()
+
             return jsonify({
                 "ammonia_concentration": primary_result['predicted_concentration'],
                 "success": True,
@@ -488,18 +506,7 @@ def predict():
                         "error": quadratic_result['red_error']
                     }
                 },
-                "chart": [
-                    {
-                        'concentration': float(row['concentration']),
-                        'description': str(row['description']),
-                        'hex': str(row['hex']),
-                        'rgb': {
-                            'r': int(row['Red']),
-                            'g': int(row['Green']),
-                            'b': int(row['Blue'])
-                        }
-                    } for _, row in color_chart.df.iterrows()
-                ]
+                "chart": calibration_data
             })
             
         except Exception as e:
@@ -878,6 +885,22 @@ def process_image():
 @app.route('/health', methods=['GET'])
 def health_check():
     return jsonify({"status": "healthy", "service": "Image Enhancement API"})
+
+@app.route('/calibration-data', methods=['GET'])
+def get_calibration_data():
+    """Get calibration data for chart visualization"""
+    try:
+        calibration_data = color_chart.get_calibration_data()
+        return jsonify({
+            "success": True,
+            "calibration_data": calibration_data
+        })
+    except Exception as e:
+        logger.exception("Error getting calibration data")
+        return jsonify({
+            "error": "Failed to get calibration data",
+            "details": str(e)
+        }), 500
 
 if __name__ == "__main__":
     logging.basicConfig(level=logging.DEBUG)
