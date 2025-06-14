@@ -488,7 +488,7 @@ def predict():
                         "error": quadratic_result['red_error']
                     }
                 },
-                "nessler_chart": [
+                "chart": [
                     {
                         'concentration': float(row['concentration']),
                         'description': str(row['description']),
